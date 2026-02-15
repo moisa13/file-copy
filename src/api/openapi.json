@@ -1,0 +1,1116 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "File Copy Manager API",
+    "description": "API para gerenciamento de copia de arquivos com fila de processamento, dashboard web em tempo real e persistencia contra quedas de energia.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "API local"
+    }
+  ],
+  "tags": [
+    { "name": "System", "description": "Health check e metricas" },
+    { "name": "Buckets", "description": "CRUD de buckets" },
+    { "name": "Service Control", "description": "Controle do servico de copia por bucket" },
+    { "name": "Files", "description": "Consulta e operacoes sobre arquivos na fila" },
+    { "name": "Scanner", "description": "Varredura de pastas de origem" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check",
+        "description": "Retorna status de saude do sistema, uptime, informacoes de banco, buckets, workers e memoria.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Sistema healthy ou degraded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          },
+          "503": {
+            "description": "Sistema unhealthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Metricas do sistema",
+        "description": "Retorna metricas de arquivos, fila e workers.",
+        "operationId": "getMetrics",
+        "responses": {
+          "200": {
+            "description": "Metricas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MetricsResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "Listar buckets",
+        "operationId": "listBuckets",
+        "responses": {
+          "200": {
+            "description": "Lista de buckets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Bucket" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Buckets"],
+        "summary": "Criar bucket",
+        "operationId": "createBucket",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BucketCreate" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Bucket criado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Bucket" }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados invalidos",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "Obter bucket por ID",
+        "operationId": "getBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bucket encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Bucket" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Buckets"],
+        "summary": "Atualizar bucket",
+        "operationId": "updateBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BucketUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bucket atualizado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Bucket" }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados invalidos",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Buckets"],
+        "summary": "Excluir bucket",
+        "operationId": "deleteBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bucket excluido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bucket deve estar parado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/stats": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "Estatisticas do bucket",
+        "operationId": "getBucketStats",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estatisticas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Stats" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/folders": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "Estatisticas por pasta de origem",
+        "operationId": "getBucketFolders",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de pastas com estatisticas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source_folder": { "type": "string" },
+                      "pending": { "$ref": "#/components/schemas/StatusCount" },
+                      "in_progress": { "$ref": "#/components/schemas/StatusCount" },
+                      "completed": { "$ref": "#/components/schemas/StatusCount" },
+                      "error": { "$ref": "#/components/schemas/StatusCount" },
+                      "conflict": { "$ref": "#/components/schemas/StatusCount" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/files/{status}": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Listar arquivos do bucket por status",
+        "operationId": "getBucketFiles",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" },
+          { "$ref": "#/components/parameters/FileStatus" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Offset" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de arquivos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/FileEntry" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/activity": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "Atividade recente do bucket",
+        "operationId": "getBucketActivity",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 10000 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de atividades recentes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/FileEntry" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service": {
+      "get": {
+        "tags": ["Service Control"],
+        "summary": "Status do servico do bucket",
+        "operationId": "getBucketServiceStatus",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status do servico",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service/start": {
+      "post": {
+        "tags": ["Service Control"],
+        "summary": "Iniciar servico do bucket",
+        "operationId": "startBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Servico iniciado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service/pause": {
+      "post": {
+        "tags": ["Service Control"],
+        "summary": "Pausar servico do bucket",
+        "operationId": "pauseBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Servico pausado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service/resume": {
+      "post": {
+        "tags": ["Service Control"],
+        "summary": "Retomar servico do bucket",
+        "operationId": "resumeBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Servico retomado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service/stop": {
+      "post": {
+        "tags": ["Service Control"],
+        "summary": "Parar servico do bucket",
+        "operationId": "stopBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Servico parado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/service/workers": {
+      "post": {
+        "tags": ["Service Control"],
+        "summary": "Alterar numero de workers",
+        "operationId": "setWorkerCount",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WorkerCount" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workers atualizados",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          },
+          "400": {
+            "description": "Count invalido",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/scan": {
+      "post": {
+        "tags": ["Scanner"],
+        "summary": "Varrer pastas de origem do bucket",
+        "operationId": "scanBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado da varredura",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ScanResult" }
+              }
+            }
+          },
+          "404": {
+            "description": "Bucket nao encontrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/conflicts/{fileId}/resolve": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Resolver conflito de arquivo no bucket",
+        "operationId": "resolveConflictForBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" },
+          { "$ref": "#/components/parameters/FileId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConflictResolution" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conflito resolvido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action invalida",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/conflicts/resolve-all": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Resolver todos os conflitos do bucket",
+        "operationId": "resolveAllConflictsForBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConflictResolution" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conflitos resolvidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/errors/{fileId}/retry": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Retentar arquivo com erro no bucket",
+        "operationId": "retryErrorForBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" },
+          { "$ref": "#/components/parameters/FileId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Arquivo retornado para fila",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/errors/retry-all": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Retentar todos os erros do bucket",
+        "operationId": "retryAllErrorsForBucket",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Erros retornados para fila",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/buckets/{id}/export/{status}": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Exportar arquivos do bucket em CSV",
+        "operationId": "exportBucketFiles",
+        "parameters": [
+          { "$ref": "#/components/parameters/BucketId" },
+          { "$ref": "#/components/parameters/FileStatus" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Arquivo CSV",
+            "content": {
+              "text/csv": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Estatisticas globais",
+        "operationId": "getGlobalStats",
+        "responses": {
+          "200": {
+            "description": "Estatisticas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Stats" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/{status}": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Listar arquivos globais por status",
+        "operationId": "getFilesByStatus",
+        "parameters": [
+          { "$ref": "#/components/parameters/FileStatus" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Offset" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de arquivos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/FileEntry" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conflicts/{fileId}/resolve": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Resolver conflito de arquivo (global)",
+        "operationId": "resolveConflict",
+        "parameters": [
+          { "$ref": "#/components/parameters/FileId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConflictResolution" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conflito resolvido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conflicts/resolve-all": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Resolver todos os conflitos (global)",
+        "operationId": "resolveAllConflicts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConflictResolution" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conflitos resolvidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/errors/{fileId}/retry": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Retentar arquivo com erro (global)",
+        "operationId": "retryError",
+        "parameters": [
+          { "$ref": "#/components/parameters/FileId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Arquivo retornado para fila",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/errors/retry-all": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Retentar todos os erros (global)",
+        "operationId": "retryAllErrors",
+        "responses": {
+          "200": {
+            "description": "Erros retornados para fila",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "changes": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan": {
+      "post": {
+        "tags": ["Scanner"],
+        "summary": "Varrer todos os buckets",
+        "operationId": "scanAll",
+        "responses": {
+          "200": {
+            "description": "Resultado da varredura global",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "buckets": { "type": "object" },
+                    "totalFound": { "type": "integer" },
+                    "totalAdded": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/export/{status}": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Exportar todos os arquivos por status em CSV",
+        "operationId": "exportFiles",
+        "parameters": [
+          { "$ref": "#/components/parameters/FileStatus" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Arquivo CSV",
+            "content": {
+              "text/csv": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "BucketId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 },
+        "description": "ID do bucket"
+      },
+      "FileId": {
+        "name": "fileId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 },
+        "description": "ID do arquivo"
+      },
+      "FileStatus": {
+        "name": "status",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "error", "conflict", "all"]
+        },
+        "description": "Status do arquivo"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": { "type": "integer", "default": 100, "minimum": 1, "maximum": 10000 },
+        "description": "Numero maximo de registros"
+      },
+      "Offset": {
+        "name": "offset",
+        "in": "query",
+        "schema": { "type": "integer", "default": 0, "minimum": 0 },
+        "description": "Deslocamento para paginacao"
+      }
+    },
+    "schemas": {
+      "Bucket": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "source_folders": { "type": "array", "items": { "type": "string" } },
+          "destination_folder": { "type": "string" },
+          "worker_count": { "type": "integer" },
+          "status": { "type": "string", "enum": ["stopped", "running", "paused"] },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "poolStatus": {
+            "type": "object",
+            "properties": {
+              "bucketId": { "type": "integer" },
+              "status": { "type": "string" },
+              "workerCount": { "type": "integer" },
+              "activeWorkers": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "BucketCreate": {
+        "type": "object",
+        "required": ["name", "destinationFolder"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "sourceFolders": { "type": "array", "items": { "type": "string" } },
+          "destinationFolder": { "type": "string", "minLength": 1 },
+          "workerCount": { "type": "integer", "minimum": 1, "maximum": 16 }
+        }
+      },
+      "BucketUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "sourceFolders": { "type": "array", "items": { "type": "string" } },
+          "destinationFolder": { "type": "string", "minLength": 1 },
+          "workerCount": { "type": "integer", "minimum": 1, "maximum": 16 }
+        }
+      },
+      "FileEntry": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "bucket_id": { "type": "integer" },
+          "bucket_name": { "type": "string" },
+          "source_path": { "type": "string" },
+          "source_folder": { "type": "string" },
+          "relative_path": { "type": "string" },
+          "destination_path": { "type": "string" },
+          "file_size": { "type": "integer" },
+          "source_hash": { "type": "string", "nullable": true },
+          "destination_hash": { "type": "string", "nullable": true },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "error", "conflict"] },
+          "error_message": { "type": "string", "nullable": true },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "started_at": { "type": "string", "nullable": true },
+          "completed_at": { "type": "string", "nullable": true },
+          "worker_id": { "type": "integer", "nullable": true }
+        }
+      },
+      "StatusCount": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer" },
+          "totalSize": { "type": "integer" }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "pending": { "$ref": "#/components/schemas/StatusCount" },
+          "in_progress": { "$ref": "#/components/schemas/StatusCount" },
+          "completed": { "$ref": "#/components/schemas/StatusCount" },
+          "error": { "$ref": "#/components/schemas/StatusCount" },
+          "conflict": { "$ref": "#/components/schemas/StatusCount" }
+        }
+      },
+      "ServiceStatus": {
+        "type": "object",
+        "properties": {
+          "bucketId": { "type": "integer" },
+          "name": { "type": "string", "nullable": true },
+          "status": { "type": "string", "enum": ["stopped", "running", "paused"] },
+          "workerCount": { "type": "integer" },
+          "activeWorkers": { "type": "integer" }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["healthy", "degraded", "unhealthy"] },
+          "uptime": { "type": "integer", "description": "Segundos desde o inicio" },
+          "version": { "type": "string" },
+          "database": {
+            "type": "object",
+            "properties": {
+              "connected": { "type": "boolean" }
+            }
+          },
+          "buckets": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "active": { "type": "integer" }
+            }
+          },
+          "workers": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "active": { "type": "integer" }
+            }
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "heapUsed": { "type": "number" },
+              "heapTotal": { "type": "number" },
+              "rss": { "type": "number" }
+            }
+          }
+        }
+      },
+      "MetricsResponse": {
+        "type": "object",
+        "properties": {
+          "files": { "$ref": "#/components/schemas/Stats" },
+          "queue": {
+            "type": "object",
+            "properties": {
+              "depth": { "type": "integer" },
+              "size": { "type": "integer" }
+            }
+          },
+          "workers": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "active": { "type": "integer" },
+              "utilization": { "type": "number" }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                },
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "ConflictResolution": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string", "enum": ["overwrite", "skip"] }
+        }
+      },
+      "WorkerCount": {
+        "type": "object",
+        "required": ["count"],
+        "properties": {
+          "count": { "type": "integer", "minimum": 1, "maximum": 16 }
+        }
+      },
+      "ScanResult": {
+        "type": "object",
+        "properties": {
+          "found": { "type": "integer" },
+          "added": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "x-websocket-events": {
+    "description": "Eventos enviados via WebSocket em ws://host:port",
+    "events": {
+      "status-update": {
+        "description": "Mudanca de status de um arquivo durante copia",
+        "payload": {
+          "bucketId": "integer",
+          "fileId": "integer",
+          "status": "string",
+          "sourcePath": "string",
+          "timestamp": "string (ISO 8601)"
+        }
+      },
+      "stats-update": {
+        "description": "Atualizacao de estatisticas de um bucket",
+        "payload": "Stats object"
+      },
+      "stats-update-global": {
+        "description": "Atualizacao de estatisticas globais",
+        "payload": "Stats object"
+      },
+      "service-update": {
+        "description": "Mudanca no estado do servico de um bucket",
+        "payload": "ServiceStatus object"
+      },
+      "bucket-update": {
+        "description": "Criacao, atualizacao ou exclusao de bucket",
+        "payload": {
+          "action": "string (created|updated|deleted)",
+          "bucket": "Bucket object (ou bucketId para deleted)"
+        }
+      }
+    }
+  }
+}

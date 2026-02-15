@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>File Copy Manager</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+  header {
+    background: #1e293b;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #334155;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #f1f5f9;
+  }
+  .ws-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #94a3b8;
+  }
+  .ws-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ef4444;
+  }
+  .ws-dot.connected { background: #10b981; }
+  .container { max-width: 1800px; margin: 0 auto; padding: 24px; width: 95%; }
+
+  .bucket-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .bucket-tab {
+    padding: 8px 16px;
+    border: 1px solid #475569;
+    border-radius: 20px;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .bucket-tab:hover { background: #1e293b; }
+  .bucket-tab.active {
+    background: #334155;
+    color: #f1f5f9;
+    border-color: #64748b;
+  }
+  .bucket-tab-add {
+    padding: 8px 14px;
+    border: 1px dashed #475569;
+    border-radius: 20px;
+    background: transparent;
+    color: #64748b;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .bucket-tab-add:hover { background: #1e293b; color: #94a3b8; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 20px;
+    border-left: 4px solid;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .card:hover { background: #263548; }
+  .card.active { outline: 2px solid #cbd5e1; }
+  .card-pending { border-color: #3b82f6; }
+  .card-in_progress { border-color: #f59e0b; }
+  .card-error { border-color: #ef4444; }
+  .card-conflict { border-color: #f97316; }
+  .card-completed { border-color: #10b981; }
+  .card-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #94a3b8;
+    margin-bottom: 8px;
+  }
+  .card-count {
+    font-size: 32px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+  }
+  .card-pending .card-count { color: #3b82f6; }
+  .card-in_progress .card-count { color: #f59e0b; }
+  .card-error .card-count { color: #ef4444; }
+  .card-conflict .card-count { color: #f97316; }
+  .card-completed .card-count { color: #10b981; }
+  .card-size {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 4px;
+    font-family: 'Courier New', monospace;
+  }
+
+  .progress-section {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .progress-bar {
+    width: 100%;
+    height: 12px;
+    background: #334155;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #34d399);
+    border-radius: 6px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+
+  .controls {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .controls-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .controls-divider {
+    width: 1px;
+    height: 32px;
+    background: #334155;
+    margin: 0 8px;
+  }
+  button {
+    padding: 8px 16px;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    background: #334155;
+    color: #e2e8f0;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  button:hover { background: #475569; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.btn-primary { background: #2563eb; border-color: #2563eb; }
+  button.btn-primary:hover { background: #1d4ed8; }
+  button.btn-danger { background: #dc2626; border-color: #dc2626; }
+  button.btn-danger:hover { background: #b91c1c; }
+  button.btn-warning { background: #d97706; border-color: #d97706; }
+  button.btn-warning:hover { background: #b45309; }
+  button.btn-success { background: #059669; border-color: #059669; }
+  button.btn-success:hover { background: #047857; }
+  input[type="number"] {
+    width: 64px;
+    padding: 8px;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 13px;
+    text-align: center;
+  }
+  input[type="text"], textarea {
+    padding: 8px 12px;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 13px;
+    width: 100%;
+  }
+  textarea { resize: vertical; min-height: 80px; font-family: 'Courier New', monospace; }
+  .service-badge {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge-running { background: #065f46; color: #6ee7b7; }
+  .badge-idle { background: #1e3a5f; color: #93c5fd; }
+  .badge-paused { background: #78350f; color: #fcd34d; }
+  .badge-stopped { background: #7f1d1d; color: #fca5a5; }
+
+  .filters {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    padding: 6px 14px;
+    border: 1px solid #475569;
+    border-radius: 16px;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .filter-btn:hover { background: #1e293b; }
+  .filter-btn.active {
+    background: #334155;
+    color: #f1f5f9;
+    border-color: #64748b;
+  }
+
+  .table-container {
+    background: #1e293b;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: #0f172a;
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64748b;
+    font-weight: 600;
+  }
+  td {
+    padding: 10px 16px;
+    font-size: 13px;
+    border-top: 1px solid #1a2536;
+    font-family: 'Courier New', monospace;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  tr:hover { background: #263548; }
+  .status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .status-pending { background: #1e3a5f; color: #60a5fa; }
+  .status-in_progress { background: #422006; color: #fbbf24; }
+  .status-completed { background: #064e3b; color: #6ee7b7; }
+  .status-error { background: #450a0a; color: #fca5a5; }
+  .status-conflict { background: #431407; color: #fdba74; }
+  .action-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    margin-right: 4px;
+  }
+  .file-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .file-progress-bar {
+    width: 60px;
+    height: 6px;
+    background: #334155;
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .file-progress-fill {
+    height: 100%;
+    background: #f59e0b;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .file-progress-pct {
+    font-size: 11px;
+    color: #fbbf24;
+    font-family: 'Courier New', monospace;
+    min-width: 32px;
+  }
+  .empty-row td { text-align: center; color: #475569; padding: 40px; font-family: inherit; }
+  .pagination {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 32px;
+    width: 480px;
+    max-width: 90vw;
+    border: 1px solid #334155;
+  }
+  .modal h2 {
+    font-size: 18px;
+    margin-bottom: 20px;
+    color: #f1f5f9;
+  }
+  .form-group {
+    margin-bottom: 16px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 6px;
+  }
+  .source-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .source-row input { flex: 1; }
+  .source-row .btn-remove {
+    padding: 4px 10px;
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 24px;
+  }
+
+  .bucket-info {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .bucket-info-details {
+    font-size: 13px;
+    color: #94a3b8;
+  }
+  .bucket-info-details span {
+    margin-right: 24px;
+  }
+
+  .folder-stats {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .folder-stats h3 {
+    font-size: 14px;
+    color: #94a3b8;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid #2a3a4f;
+  }
+  .folder-row:last-child { border-bottom: none; }
+  .folder-name {
+    flex: 1;
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+    color: #cbd5e1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .folder-progress-bar {
+    width: 200px;
+    height: 8px;
+    background: #334155;
+    border-radius: 4px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .folder-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #34d399);
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+  .folder-pct {
+    width: 48px;
+    text-align: right;
+    font-size: 12px;
+    font-family: 'Courier New', monospace;
+    color: #94a3b8;
+    flex-shrink: 0;
+  }
+  .folder-counts {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    min-width: 210px;
+  }
+  .folder-counts span {
+    display: inline-block;
+    min-width: 30px;
+    text-align: right;
+  }
+  .folder-counts .fc-pending { color: #3b82f6; }
+  .folder-counts .fc-progress { color: #f59e0b; }
+  .folder-counts .fc-done { color: #10b981; }
+  .folder-counts .fc-err { color: #ef4444; }
+  .folder-counts .fc-conflict { color: #f97316; }
+  .folder-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .folder-indicator.active { background: #f59e0b; animation: pulse 1.5s infinite; }
+  .folder-indicator.done { background: #10b981; }
+  .folder-indicator.waiting { background: #475569; }
+  .folder-indicator.has-errors { background: #ef4444; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .toast-container {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #f1f5f9;
+    border-left: 4px solid;
+    pointer-events: auto;
+    animation: toastIn 0.3s ease-out;
+    max-width: 380px;
+    word-break: break-word;
+  }
+  .toast.removing { animation: toastOut 0.3s ease-in forwards; }
+  .toast-success { background: #064e3b; border-color: #10b981; }
+  .toast-error { background: #450a0a; border-color: #ef4444; }
+  .toast-info { background: #1e3a5f; border-color: #3b82f6; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(100%); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(100%); }
+  }
+
+  .btn-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.6;
+  }
+  .btn-loading::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border: 2px solid transparent;
+    border-top-color: #e2e8f0;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+<div class="toast-container" id="toastContainer"></div>
+<header>
+  <h1>FILE COPY MANAGER</h1>
+  <div class="ws-status">
+    <span id="wsLabel">Desconectado</span>
+    <span class="ws-dot" id="wsDot"></span>
+  </div>
+</header>
+<div class="container">
+  <div class="bucket-bar" id="bucketBar">
+    <button class="bucket-tab active" data-bucket-id="" onclick="selectBucket(null)">Todos</button>
+    <button class="bucket-tab-add" onclick="openBucketModal()">+ Novo Bucket</button>
+  </div>
+
+  <div class="bucket-info" id="bucketInfo" style="display:none">
+    <div class="bucket-info-details" id="bucketInfoDetails"></div>
+    <div class="controls-group">
+      <button onclick="openBucketModal(currentBucketId)">Editar</button>
+      <button class="btn-danger" onclick="deleteBucket()">Excluir</button>
+    </div>
+  </div>
+
+  <div class="folder-stats" id="bucketsSummary" style="display:none">
+    <h3>Resumo dos Buckets</h3>
+    <div id="bucketsSummaryBody"></div>
+  </div>
+
+  <div class="folder-stats" id="folderStats" style="display:none">
+    <h3>Progresso por Pasta de Origem</h3>
+    <div id="folderStatsBody"></div>
+  </div>
+
+  <div class="cards">
+    <div class="card card-pending" data-filter="pending">
+      <div class="card-label">Pendentes</div>
+      <div class="card-count" id="countPending">0</div>
+      <div class="card-size" id="sizePending">0 B</div>
+    </div>
+    <div class="card card-in_progress" data-filter="in_progress">
+      <div class="card-label">Em Andamento</div>
+      <div class="card-count" id="countInProgress">0</div>
+      <div class="card-size" id="sizeInProgress">0 B</div>
+    </div>
+    <div class="card card-error" data-filter="error">
+      <div class="card-label">Erros</div>
+      <div class="card-count" id="countError">0</div>
+      <div class="card-size" id="sizeError">0 B</div>
+    </div>
+    <div class="card card-conflict" data-filter="conflict">
+      <div class="card-label">Conflitos</div>
+      <div class="card-count" id="countConflict">0</div>
+      <div class="card-size" id="sizeConflict">0 B</div>
+    </div>
+    <div class="card card-completed" data-filter="completed">
+      <div class="card-label">Finalizados</div>
+      <div class="card-count" id="countCompleted">0</div>
+      <div class="card-size" id="sizeCompleted">0 B</div>
+    </div>
+  </div>
+
+  <div class="progress-section">
+    <div class="progress-header">
+      <span>Progresso Total</span>
+      <span id="progressLabel">0%</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+  <div class="controls" id="controlsSection">
+    <div class="controls-group">
+      <span class="service-badge badge-stopped" id="serviceBadge">PARADO</span>
+    </div>
+    <div class="controls-divider"></div>
+    <div class="controls-group">
+      <button class="btn-success" id="btnStart" onclick="serviceAction('start')">Iniciar</button>
+      <button class="btn-warning" id="btnPause" onclick="serviceAction('pause')" disabled>Pausar</button>
+      <button id="btnResume" onclick="serviceAction('resume')" disabled>Retomar</button>
+      <button class="btn-danger" id="btnStop" onclick="serviceAction('stop')" disabled>Parar</button>
+    </div>
+    <div class="controls-divider"></div>
+    <div class="controls-group">
+      <button class="btn-primary" onclick="doScan(this)">Re-escanear</button>
+    </div>
+    <div class="controls-divider"></div>
+    <div class="controls-group">
+      <label style="font-size:13px;color:#94a3b8">Workers:</label>
+      <input type="number" id="workerInput" min="1" max="16" value="4">
+      <button onclick="setWorkers(this)">Aplicar</button>
+    </div>
+    <div class="controls-divider"></div>
+    <div class="controls-group">
+      <button onclick="resolveAllConflicts('overwrite',this)">Sobrescrever Todos</button>
+      <button onclick="resolveAllConflicts('skip',this)">Pular Todos</button>
+      <button onclick="retryAllErrors(this)">Retentar Todos</button>
+    </div>
+  </div>
+
+  <div class="filters" style="justify-content:space-between">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">Todos</button>
+      <button class="filter-btn" data-filter="pending" onclick="setFilter('pending')">Pendentes</button>
+      <button class="filter-btn" data-filter="in_progress" onclick="setFilter('in_progress')">Em Andamento</button>
+      <button class="filter-btn" data-filter="error" onclick="setFilter('error')">Erros</button>
+      <button class="filter-btn" data-filter="conflict" onclick="setFilter('conflict')">Conflitos</button>
+      <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">Finalizados</button>
+    </div>
+    <button onclick="exportCsv()" style="font-size:12px;padding:6px 14px">Exportar CSV</button>
+  </div>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Bucket</th>
+          <th>Arquivo</th>
+          <th>Origem</th>
+          <th>Tamanho</th>
+          <th>Status</th>
+          <th>Data/Hora</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr class="empty-row"><td colspan="8">Nenhum arquivo na fila</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pagination">
+    <button id="btnPrev" onclick="changePage(-1)" disabled>&lt; Anterior</button>
+    <span id="pageInfo" style="line-height:34px;font-size:13px;color:#64748b">1</span>
+    <button id="btnNext" onclick="changePage(1)" disabled>Próximo &gt;</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="bucketModal">
+  <div class="modal">
+    <h2 id="modalTitle">Novo Bucket</h2>
+    <input type="hidden" id="modalBucketId">
+    <div class="form-group">
+      <label>Nome</label>
+      <input type="text" id="modalName" placeholder="Ex: Cliente A">
+    </div>
+    <div class="form-group">
+      <label>Pastas de Origem</label>
+      <div id="modalSourcesList"></div>
+      <button type="button" onclick="addSourceInput()" style="margin-top:8px;font-size:12px;padding:4px 12px">+ Adicionar pasta</button>
+    </div>
+    <div class="form-group">
+      <label>Pasta de Destino</label>
+      <input type="text" id="modalDest" placeholder="/caminho/destino">
+    </div>
+    <div class="form-group">
+      <label>Workers</label>
+      <input type="number" id="modalWorkers" min="1" max="16" value="4" style="width:80px">
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeBucketModal()">Cancelar</button>
+      <button class="btn-primary" onclick="saveBucket()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PAGE_SIZE = 100;
+let currentFilter = 'all';
+let currentPage = 0;
+let currentBucketId = null;
+let buckets = [];
+let ws = null;
+let lastServiceState = null;
+let scanningBtn = null;
+const fileProgress = new Map();
+
+function formatSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  let d = dateStr;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(d)) {
+    d = d.replace(' ', 'T') + 'Z';
+  }
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return dateStr;
+  return date.toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' });
+}
+
+function statusLabel(s) {
+  const map = { pending: 'PENDENTE', in_progress: 'EM ANDAMENTO', completed: 'FINALIZADO', error: 'ERRO', conflict: 'CONFLITO' };
+  return map[s] || s;
+}
+
+function showToast(message, type) {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('removing');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, 3000);
+}
+
+function setButtonLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) {
+    btn.classList.add('btn-loading');
+  } else {
+    btn.classList.remove('btn-loading');
+  }
+}
+
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || data.error || 'Erro na requisicao');
+  return data;
+}
+
+function updateStats(stats) {
+  document.getElementById('countPending').textContent = stats.pending?.count || 0;
+  document.getElementById('sizePending').textContent = formatSize(stats.pending?.totalSize);
+  document.getElementById('countInProgress').textContent = stats.in_progress?.count || 0;
+  document.getElementById('sizeInProgress').textContent = formatSize(stats.in_progress?.totalSize);
+  document.getElementById('countError').textContent = stats.error?.count || 0;
+  document.getElementById('sizeError').textContent = formatSize(stats.error?.totalSize);
+  document.getElementById('countConflict').textContent = stats.conflict?.count || 0;
+  document.getElementById('sizeConflict').textContent = formatSize(stats.conflict?.totalSize);
+  document.getElementById('countCompleted').textContent = stats.completed?.count || 0;
+  document.getElementById('sizeCompleted').textContent = formatSize(stats.completed?.totalSize);
+
+  const total = (stats.pending?.count || 0) + (stats.in_progress?.count || 0) +
+    (stats.completed?.count || 0) + (stats.error?.count || 0) + (stats.conflict?.count || 0);
+  const completed = stats.completed?.count || 0;
+  const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = pct + '%';
+
+  if (lastServiceState && currentBucketId) {
+    updateService(lastServiceState);
+  }
+}
+
+function updateService(svc) {
+  lastServiceState = svc;
+  const badge = document.getElementById('serviceBadge');
+  const pending = parseInt(document.getElementById('countPending').textContent) || 0;
+  const inProgress = parseInt(document.getElementById('countInProgress').textContent) || 0;
+  const isIdle = svc.status === 'running' && pending === 0 && inProgress === 0;
+
+  if (isIdle) {
+    badge.textContent = 'OCIOSO';
+    badge.className = 'service-badge badge-idle';
+  } else {
+    const labels = { running: 'EXECUTANDO', paused: 'PAUSADO', stopped: 'PARADO' };
+    badge.textContent = labels[svc.status] || svc.status.toUpperCase();
+    badge.className = 'service-badge badge-' + svc.status;
+  }
+
+  document.getElementById('btnStart').disabled = svc.status === 'running';
+  document.getElementById('btnPause').disabled = svc.status !== 'running';
+  document.getElementById('btnResume').disabled = svc.status !== 'paused';
+  document.getElementById('btnStop').disabled = svc.status === 'stopped';
+  document.getElementById('workerInput').value = svc.workerCount;
+}
+
+function renderStatusCell(f) {
+  if (f.status === 'in_progress') {
+    const prog = fileProgress.get(f.id);
+    if (prog) {
+      return `<div class="file-progress" data-progress-id="${f.id}">
+        <span class="status-badge status-in_progress">EM ANDAMENTO</span>
+        <div class="file-progress-bar"><div class="file-progress-fill" style="width:${prog.percent}%"></div></div>
+        <span class="file-progress-pct">${prog.percent}%</span>
+      </div>`;
+    }
+    return `<div class="file-progress" data-progress-id="${f.id}">
+      <span class="status-badge status-in_progress">EM ANDAMENTO</span>
+      <div class="file-progress-bar"><div class="file-progress-fill" style="width:0%"></div></div>
+      <span class="file-progress-pct">0%</span>
+    </div>`;
+  }
+  return `<span class="status-badge status-${f.status}">${statusLabel(f.status)}</span>`;
+}
+
+function updateFileProgress(data) {
+  fileProgress.set(data.fileId, { bytesCopied: data.bytesCopied, fileSize: data.fileSize, percent: data.percent });
+  const el = document.querySelector(`[data-progress-id="${data.fileId}"]`);
+  if (!el) return;
+  const fill = el.querySelector('.file-progress-fill');
+  const pct = el.querySelector('.file-progress-pct');
+  if (fill) fill.style.width = data.percent + '%';
+  if (pct) pct.textContent = data.percent + '%';
+}
+
+function renderTable(files) {
+  const tbody = document.getElementById('tableBody');
+  if (!files || files.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">Nenhum arquivo encontrado</td></tr>';
+    return;
+  }
+  tbody.innerHTML = files.map(f => {
+    let actions = '';
+    if (f.status === 'conflict') {
+      actions = `<button class="action-btn btn-primary" onclick="resolveConflict(${f.id},'overwrite',this)">Sobrescrever</button>` +
+        `<button class="action-btn" onclick="resolveConflict(${f.id},'skip',this)">Pular</button>`;
+    } else if (f.status === 'error') {
+      actions = `<button class="action-btn btn-warning" onclick="retryError(${f.id},this)">Retentar</button>`;
+    }
+    const timestamp = formatDate(f.completed_at || f.started_at || f.updated_at || f.created_at || '');
+    return `<tr>
+      <td>${f.id}</td>
+      <td>${f.bucket_name || '-'}</td>
+      <td title="${f.source_path}">${f.relative_path}</td>
+      <td title="${f.source_folder}">${f.source_folder}</td>
+      <td>${formatSize(f.file_size)}</td>
+      <td>${renderStatusCell(f)}</td>
+      <td>${timestamp}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function apiPrefix() {
+  return currentBucketId ? `/api/buckets/${currentBucketId}` : '/api';
+}
+
+async function loadFiles() {
+  const status = currentFilter === 'all' ? 'all' : currentFilter;
+  const prefix = apiPrefix();
+  const files = await api('GET', `${prefix}/files/${status}?limit=${PAGE_SIZE}&offset=${currentPage * PAGE_SIZE}`);
+  renderTable(files);
+  document.getElementById('btnPrev').disabled = currentPage === 0;
+  document.getElementById('btnNext').disabled = files.length < PAGE_SIZE;
+  document.getElementById('pageInfo').textContent = `Página ${currentPage + 1}`;
+}
+
+function exportCsv() {
+  const status = currentFilter === 'all' ? 'all' : currentFilter;
+  const prefix = currentBucketId ? `/api/buckets/${currentBucketId}/export` : '/api/export';
+  window.open(`${prefix}/${status}`, '_blank');
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  currentPage = 0;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  document.querySelectorAll('.card').forEach(c => c.classList.toggle('active', c.dataset.filter === f));
+  loadFiles();
+}
+
+function changePage(delta) {
+  currentPage = Math.max(0, currentPage + delta);
+  loadFiles();
+}
+
+async function serviceAction(action) {
+  if (!currentBucketId) return;
+  const btnMap = { start: 'btnStart', pause: 'btnPause', resume: 'btnResume', stop: 'btnStop' };
+  const btn = document.getElementById(btnMap[action]);
+  setButtonLoading(btn, true);
+  try {
+    const data = await api('POST', `/api/buckets/${currentBucketId}/service/${action}`);
+    updateService(data);
+    const msgs = { start: 'Servico iniciado', pause: 'Servico pausado', resume: 'Servico retomado', stop: 'Servico parado' };
+    showToast(msgs[action], 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function setWorkers(btn) {
+  if (!currentBucketId) return;
+  const count = parseInt(document.getElementById('workerInput').value);
+  if (count < 1) return;
+  setButtonLoading(btn, true);
+  try {
+    const data = await api('POST', `/api/buckets/${currentBucketId}/service/workers`, { count });
+    updateService(data);
+    showToast(`Workers alterados para ${count}`, 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function doScan(btn) {
+  setButtonLoading(btn, true);
+  scanningBtn = btn;
+  try {
+    if (currentBucketId) {
+      await api('POST', `/api/buckets/${currentBucketId}/scan`);
+    } else {
+      await api('POST', '/api/scan');
+    }
+    showToast('Varredura iniciada', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+    setButtonLoading(btn, false);
+    scanningBtn = null;
+  }
+}
+
+async function resolveConflict(id, action, btn) {
+  setButtonLoading(btn, true);
+  try {
+    if (currentBucketId) {
+      await api('POST', `/api/buckets/${currentBucketId}/conflicts/${id}/resolve`, { action });
+      const stats = await api('GET', `/api/buckets/${currentBucketId}/stats`);
+      updateStats(stats);
+    } else {
+      await api('POST', `/api/conflicts/${id}/resolve`, { action });
+      const stats = await api('GET', '/api/stats');
+      updateStats(stats);
+    }
+    loadFiles();
+    showToast('Conflito resolvido', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function resolveAllConflicts(action, btn) {
+  setButtonLoading(btn, true);
+  try {
+    if (currentBucketId) {
+      await api('POST', `/api/buckets/${currentBucketId}/conflicts/resolve-all`, { action });
+      const stats = await api('GET', `/api/buckets/${currentBucketId}/stats`);
+      updateStats(stats);
+    } else {
+      await api('POST', '/api/conflicts/resolve-all', { action });
+      const stats = await api('GET', '/api/stats');
+      updateStats(stats);
+    }
+    loadFiles();
+    showToast('Conflitos resolvidos', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function retryError(id, btn) {
+  setButtonLoading(btn, true);
+  try {
+    if (currentBucketId) {
+      await api('POST', `/api/buckets/${currentBucketId}/errors/${id}/retry`);
+      const stats = await api('GET', `/api/buckets/${currentBucketId}/stats`);
+      updateStats(stats);
+    } else {
+      await api('POST', `/api/errors/${id}/retry`);
+      const stats = await api('GET', '/api/stats');
+      updateStats(stats);
+    }
+    loadFiles();
+    showToast('Erro reenfileirado', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function retryAllErrors(btn) {
+  setButtonLoading(btn, true);
+  try {
+    if (currentBucketId) {
+      await api('POST', `/api/buckets/${currentBucketId}/errors/retry-all`);
+      const stats = await api('GET', `/api/buckets/${currentBucketId}/stats`);
+      updateStats(stats);
+    } else {
+      await api('POST', '/api/errors/retry-all');
+      const stats = await api('GET', '/api/stats');
+      updateStats(stats);
+    }
+    loadFiles();
+    showToast('Erros reenfileirados', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function loadBucketsSummary() {
+  const container = document.getElementById('bucketsSummary');
+  const body = document.getElementById('bucketsSummaryBody');
+
+  if (currentBucketId !== null || buckets.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  const statsPromises = buckets.map(b => api('GET', `/api/buckets/${b.id}/stats`));
+  const allStats = await Promise.all(statsPromises);
+
+  container.style.display = 'block';
+  body.innerHTML = buckets.map((b, i) => {
+    const s = allStats[i];
+    const total = (s.pending?.count || 0) + (s.in_progress?.count || 0) +
+      (s.completed?.count || 0) + (s.error?.count || 0) + (s.conflict?.count || 0);
+    const done = s.completed?.count || 0;
+    const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
+
+    const pending = s.pending?.count || 0;
+    const inProg = s.in_progress?.count || 0;
+    const isActive = inProg > 0 || pending > 0;
+    const isDone = total > 0 && pending === 0 && inProg === 0;
+    const hasErrors = (s.error?.count || 0) > 0 || (s.conflict?.count || 0) > 0;
+
+    let indicatorClass = 'waiting';
+    if (isActive) indicatorClass = 'active';
+    else if (hasErrors && isDone) indicatorClass = 'has-errors';
+    else if (isDone) indicatorClass = 'done';
+
+    const poolStatus = b.poolStatus?.status || 'stopped';
+    const badgeLabels = { running: 'EXEC', paused: 'PAUSA', stopped: 'PARADO' };
+    let badgeLabel = badgeLabels[poolStatus] || poolStatus;
+    if (poolStatus === 'running' && pending === 0 && inProg === 0) badgeLabel = 'OCIOSO';
+    const badgeCls = (poolStatus === 'running' && pending === 0 && inProg === 0) ? 'idle' : poolStatus;
+
+    return `<div class="folder-row">
+      <span class="folder-indicator ${indicatorClass}"></span>
+      <span class="folder-name" title="${b.name}">${b.name}</span>
+      <span class="service-badge badge-${badgeCls}" style="font-size:10px;padding:2px 8px">${badgeLabel}</span>
+      <div class="folder-progress-bar"><div class="folder-progress-fill" style="width:${pct}%"></div></div>
+      <span class="folder-pct">${pct}%</span>
+      <div class="folder-counts">
+        <span class="fc-pending" title="Pendentes">${pending}p</span>
+        <span class="fc-progress" title="Em andamento">${inProg}a</span>
+        <span class="fc-done" title="Finalizados">${done}f</span>
+        <span class="fc-err" title="Erros">${s.error?.count || 0}e</span>
+        <span class="fc-conflict" title="Conflitos">${s.conflict?.count || 0}c</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadBuckets() {
+  buckets = await api('GET', '/api/buckets');
+  renderBucketBar();
+}
+
+function renderBucketBar() {
+  const bar = document.getElementById('bucketBar');
+  let html = `<button class="bucket-tab ${currentBucketId === null ? 'active' : ''}" data-bucket-id="" onclick="selectBucket(null)">Todos</button>`;
+  for (const b of buckets) {
+    const active = currentBucketId === b.id ? 'active' : '';
+    html += `<button class="bucket-tab ${active}" data-bucket-id="${b.id}" onclick="selectBucket(${b.id})">${b.name}</button>`;
+  }
+  html += `<button class="bucket-tab-add" onclick="openBucketModal()">+ Novo Bucket</button>`;
+  bar.innerHTML = html;
+}
+
+async function loadFolderStats() {
+  const container = document.getElementById('folderStats');
+  const body = document.getElementById('folderStatsBody');
+
+  if (!currentBucketId) {
+    container.style.display = 'none';
+    return;
+  }
+
+  const folders = await api('GET', `/api/buckets/${currentBucketId}/folders`);
+  if (!folders || folders.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  container.style.display = 'block';
+
+  let foundActive = false;
+  body.innerHTML = folders.map(f => {
+    const total = f.pending.count + f.in_progress.count + f.completed.count + f.error.count + f.conflict.count;
+    const done = f.completed.count;
+    const pct = total > 0 ? ((done / total) * 100).toFixed(1) : 0;
+
+    const isActive = f.in_progress.count > 0 || (f.pending.count > 0 && !foundActive);
+    const isDone = total > 0 && f.pending.count === 0 && f.in_progress.count === 0;
+    const hasErrors = f.error.count > 0 || f.conflict.count > 0;
+
+    let indicatorClass = 'waiting';
+    if (isActive) { indicatorClass = 'active'; foundActive = true; }
+    else if (hasErrors && isDone) { indicatorClass = 'has-errors'; }
+    else if (isDone) { indicatorClass = 'done'; }
+
+    return `<div class="folder-row">
+      <span class="folder-indicator ${indicatorClass}"></span>
+      <span class="folder-name" title="${f.source_folder}">${f.source_folder}</span>
+      <div class="folder-progress-bar"><div class="folder-progress-fill" style="width:${pct}%"></div></div>
+      <span class="folder-pct">${pct}%</span>
+      <div class="folder-counts">
+        <span class="fc-pending" title="Pendentes">${f.pending.count}p</span>
+        <span class="fc-progress" title="Em andamento">${f.in_progress.count}a</span>
+        <span class="fc-done" title="Finalizados">${f.completed.count}f</span>
+        <span class="fc-err" title="Erros">${f.error.count}e</span>
+        <span class="fc-conflict" title="Conflitos">${f.conflict.count}c</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function selectBucket(id) {
+  currentBucketId = id;
+  currentPage = 0;
+  renderBucketBar();
+
+  const controlsSection = document.getElementById('controlsSection');
+  const bucketInfo = document.getElementById('bucketInfo');
+
+  if (id === null) {
+    controlsSection.style.display = 'none';
+    bucketInfo.style.display = 'none';
+    document.getElementById('folderStats').style.display = 'none';
+    lastServiceState = null;
+    const stats = await api('GET', '/api/stats');
+    updateStats(stats);
+    loadBucketsSummary();
+  } else {
+    document.getElementById('bucketsSummary').style.display = 'none';
+    controlsSection.style.display = 'flex';
+    const bucket = buckets.find(b => b.id === id);
+    if (bucket) {
+      document.getElementById('bucketInfoDetails').innerHTML =
+        `<span>Destino: ${bucket.destination_folder}</span>`;
+      bucketInfo.style.display = 'flex';
+    }
+    const [stats, service] = await Promise.all([
+      api('GET', `/api/buckets/${id}/stats`),
+      api('GET', `/api/buckets/${id}/service`),
+    ]);
+    updateStats(stats);
+    updateService(service);
+    loadFolderStats();
+  }
+  loadFiles();
+}
+
+function addSourceInput(value) {
+  const list = document.getElementById('modalSourcesList');
+  const row = document.createElement('div');
+  row.className = 'source-row';
+  row.innerHTML = `<input type="text" placeholder="/caminho/pasta" value="${value || ''}"><button type="button" class="btn-remove btn-danger" onclick="this.parentElement.remove()">&times;</button>`;
+  list.appendChild(row);
+}
+
+function removeSourceInput(btn) {
+  btn.parentElement.remove();
+}
+
+function getSourceFolders() {
+  const inputs = document.querySelectorAll('#modalSourcesList .source-row input');
+  return Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
+}
+
+function openBucketModal(editId) {
+  const modal = document.getElementById('bucketModal');
+  const title = document.getElementById('modalTitle');
+  const list = document.getElementById('modalSourcesList');
+  list.innerHTML = '';
+
+  if (editId) {
+    const bucket = buckets.find(b => b.id === editId);
+    if (!bucket) return;
+    title.textContent = 'Editar Bucket';
+    document.getElementById('modalBucketId').value = editId;
+    document.getElementById('modalName').value = bucket.name;
+    bucket.source_folders.forEach(f => addSourceInput(f));
+    document.getElementById('modalDest').value = bucket.destination_folder;
+    document.getElementById('modalWorkers').value = bucket.worker_count;
+  } else {
+    title.textContent = 'Novo Bucket';
+    document.getElementById('modalBucketId').value = '';
+    document.getElementById('modalName').value = '';
+    addSourceInput();
+    document.getElementById('modalDest').value = '';
+    document.getElementById('modalWorkers').value = 4;
+  }
+
+  modal.classList.add('visible');
+}
+
+function closeBucketModal() {
+  document.getElementById('bucketModal').classList.remove('visible');
+}
+
+async function saveBucket() {
+  const editId = document.getElementById('modalBucketId').value;
+  const name = document.getElementById('modalName').value.trim();
+  const sourceFolders = getSourceFolders();
+  const destinationFolder = document.getElementById('modalDest').value.trim();
+  const workerCount = parseInt(document.getElementById('modalWorkers').value) || 4;
+
+  if (!name || !destinationFolder) {
+    showToast('Nome e pasta de destino sao obrigatorios', 'error');
+    return;
+  }
+
+  const btn = document.querySelector('#bucketModal .btn-primary');
+  setButtonLoading(btn, true);
+  try {
+    if (editId) {
+      await api('PUT', `/api/buckets/${editId}`, { name, sourceFolders, destinationFolder, workerCount });
+    } else {
+      await api('POST', '/api/buckets', { name, sourceFolders, destinationFolder, workerCount });
+    }
+
+    closeBucketModal();
+    await loadBuckets();
+
+    if (editId && currentBucketId === parseInt(editId)) {
+      selectBucket(currentBucketId);
+    }
+    showToast(editId ? 'Bucket atualizado' : 'Bucket criado', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function deleteBucket() {
+  if (!currentBucketId) return;
+  const bucket = buckets.find(b => b.id === currentBucketId);
+  if (!confirm(`Excluir bucket "${bucket ? bucket.name : currentBucketId}" e todos seus arquivos?`)) return;
+
+  const btn = document.querySelector('#bucketInfo .btn-danger');
+  setButtonLoading(btn, true);
+  try {
+    const pool = bucket && bucket.poolStatus;
+    if (pool && pool.status !== 'stopped') {
+      await api('POST', `/api/buckets/${currentBucketId}/service/stop`);
+    }
+
+    await api('DELETE', `/api/buckets/${currentBucketId}`);
+    await loadBuckets();
+    selectBucket(null);
+    showToast('Bucket excluido', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+document.querySelectorAll('.card').forEach(c => {
+  c.addEventListener('click', () => setFilter(c.dataset.filter));
+});
+
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => {
+    document.getElementById('wsDot').classList.add('connected');
+    document.getElementById('wsLabel').textContent = 'Conectado';
+  };
+  ws.onclose = () => {
+    document.getElementById('wsDot').classList.remove('connected');
+    document.getElementById('wsLabel').textContent = 'Desconectado';
+    setTimeout(connectWS, 3000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.event === 'stats-update') {
+      if (currentBucketId && msg.data) {
+        updateStats(msg.data);
+        loadFolderStats();
+      }
+    }
+
+    if (msg.event === 'stats-update-global') {
+      if (!currentBucketId && msg.data) {
+        updateStats(msg.data);
+        loadBucketsSummary();
+      }
+    }
+
+    if (msg.event === 'service-update') {
+      if (currentBucketId && msg.data && msg.data.bucketId === currentBucketId) {
+        updateService(msg.data);
+      }
+    }
+
+    if (msg.event === 'copy-progress') {
+      updateFileProgress(msg.data);
+    }
+
+    if (msg.event === 'status-update') {
+      if (msg.data && msg.data.status !== 'in_progress') {
+        fileProgress.delete(msg.data.fileId);
+      }
+      if (!currentBucketId || (msg.data && msg.data.bucketId === currentBucketId)) {
+        loadFiles();
+      }
+    }
+
+    if (msg.event === 'scan-complete') {
+      if (scanningBtn) {
+        setButtonLoading(scanningBtn, false);
+        scanningBtn = null;
+      }
+      const d = msg.data || {};
+      if (d.bucketId && currentBucketId === d.bucketId) {
+        api('GET', `/api/buckets/${currentBucketId}/stats`).then(updateStats);
+        loadFolderStats();
+        loadFiles();
+        showToast(`Varredura concluida: ${d.found} encontrado(s), ${d.added} novo(s)`, 'success');
+      } else if (!d.bucketId && !currentBucketId) {
+        api('GET', '/api/stats').then(updateStats);
+        loadBucketsSummary();
+        loadFiles();
+        const found = d.totalFound != null ? d.totalFound : 0;
+        const added = d.totalAdded != null ? d.totalAdded : 0;
+        showToast(`Varredura concluida: ${found} encontrado(s), ${added} novo(s)`, 'success');
+      }
+    }
+
+    if (msg.event === 'bucket-update') {
+      loadBuckets();
+    }
+  };
+}
+
+async function init() {
+  await loadBuckets();
+
+  const controlsSection = document.getElementById('controlsSection');
+  controlsSection.style.display = 'none';
+
+  const stats = await api('GET', '/api/stats');
+  updateStats(stats);
+  loadFiles();
+  connectWS();
+}
+
+init();
+</script>
+</body>
+</html>
