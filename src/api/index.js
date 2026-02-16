@@ -387,12 +387,34 @@ function createServer(bucketManager) {
     });
   }
 
+  const _pendingStatsBuckets = new Set();
+  let _pendingGlobalStats = false;
+  let _flushStatsTimer = null;
+  let _statsDirty = false;
+
+  function scheduleStatsBroadcast(bucketId) {
+    if (bucketId) _pendingStatsBuckets.add(bucketId);
+    _pendingGlobalStats = true;
+    _statsDirty = true;
+    if (_flushStatsTimer) return;
+    _flushStatsTimer = setTimeout(flushStatsBroadcast, 250);
+  }
+
+  function flushStatsBroadcast() {
+    _flushStatsTimer = null;
+    for (const bid of _pendingStatsBuckets) {
+      broadcast('stats-update', database.getStatsByBucket(bid));
+    }
+    _pendingStatsBuckets.clear();
+    if (_pendingGlobalStats) {
+      broadcast('stats-update-global', database.getStats());
+      _pendingGlobalStats = false;
+    }
+  }
+
   bucketManager.on('status-change', (data) => {
     broadcast('status-update', { ...data, timestamp: new Date().toISOString() });
-    if (data.bucketId) {
-      broadcast('stats-update', database.getStatsByBucket(data.bucketId));
-    }
-    broadcast('stats-update-global', database.getStats());
+    scheduleStatsBroadcast(data.bucketId);
   });
 
   bucketManager.on('copy-progress', (data) => {
@@ -411,6 +433,8 @@ function createServer(bucketManager) {
 
   function startStatsTimer() {
     statsInterval = setInterval(() => {
+      if (!_statsDirty) return;
+      _statsDirty = false;
       broadcast('stats-update-global', database.getStats());
     }, 2000);
   }
@@ -419,6 +443,10 @@ function createServer(bucketManager) {
     if (statsInterval) {
       clearInterval(statsInterval);
       statsInterval = null;
+    }
+    if (_flushStatsTimer) {
+      clearTimeout(_flushStatsTimer);
+      _flushStatsTimer = null;
     }
     wss.clients.forEach((client) => client.terminate());
     wss.close();

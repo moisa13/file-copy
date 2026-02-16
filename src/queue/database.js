@@ -3,8 +3,6 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const config = require('../config');
 
-const SCHEMA_VERSION = 2;
-
 class FileQueueDB {
   constructor() {
     const dbDir = path.dirname(config.database.path);
@@ -14,10 +12,69 @@ class FileQueueDB {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
 
+    this._globalStats = this._emptyStats();
+    this._bucketStats = {};
+
     this._createSchema();
     this._migrate();
     this._recoverCrash();
     this._prepareStatements();
+    this._loadStatsCache();
+  }
+
+  _emptyStats() {
+    return {
+      pending: { count: 0, totalSize: 0 },
+      in_progress: { count: 0, totalSize: 0 },
+      completed: { count: 0, totalSize: 0 },
+      error: { count: 0, totalSize: 0 },
+      conflict: { count: 0, totalSize: 0 },
+    };
+  }
+
+  _loadStatsCache() {
+    this._globalStats = this._emptyStats();
+    this._bucketStats = {};
+
+    const globalRows = this._stmts.getStatsFromDB.all();
+    for (const row of globalRows) {
+      if (this._globalStats[row.status]) {
+        this._globalStats[row.status] = { count: row.count, totalSize: row.totalSize };
+      }
+    }
+
+    const buckets = this._stmts.getAllBuckets.all();
+    for (const bucket of buckets) {
+      const bucketRows = this._stmts.getStatsByBucketFromDB.all(bucket.id);
+      const stats = this._emptyStats();
+      for (const row of bucketRows) {
+        if (stats[row.status]) {
+          stats[row.status] = { count: row.count, totalSize: row.totalSize };
+        }
+      }
+      this._bucketStats[bucket.id] = stats;
+    }
+  }
+
+  _adjustStats(bucketId, status, countDelta, sizeDelta) {
+    if (this._globalStats[status]) {
+      this._globalStats[status].count += countDelta;
+      this._globalStats[status].totalSize += sizeDelta;
+    }
+    if (bucketId != null && this._bucketStats[bucketId] && this._bucketStats[bucketId][status]) {
+      this._bucketStats[bucketId][status].count += countDelta;
+      this._bucketStats[bucketId][status].totalSize += sizeDelta;
+    }
+  }
+
+  _transitionStats(bucketId, oldStatus, newStatus, fileSize) {
+    const size = fileSize || 0;
+    this._adjustStats(bucketId, oldStatus, -1, -size);
+    this._adjustStats(bucketId, newStatus, 1, size);
+  }
+
+  _rebuildStatsCache() {
+    this._loadStatsCache();
   }
 
   _createSchema() {
@@ -116,7 +173,17 @@ class FileQueueDB {
         }
       }
 
-      this._setSchemaVersion(SCHEMA_VERSION);
+      this._setSchemaVersion(2);
+    }
+
+    if (currentVersion < 3) {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_bucket_status_folder_id
+          ON file_queue(bucket_id, status, source_folder, id);
+        CREATE INDEX IF NOT EXISTS idx_bucket_status
+          ON file_queue(bucket_id, status);
+      `);
+      this._setSchemaVersion(3);
     }
   }
 
@@ -207,12 +274,16 @@ class FileQueueDB {
         WHERE id = @id AND status = 'pending'
       `),
 
-      getStats: this.db.prepare(`
+      getFileMeta: this.db.prepare(`
+        SELECT id, bucket_id, status, file_size FROM file_queue WHERE id = ?
+      `),
+
+      getStatsFromDB: this.db.prepare(`
         SELECT status, COUNT(*) as count, COALESCE(SUM(file_size), 0) as totalSize
         FROM file_queue GROUP BY status
       `),
 
-      getStatsByBucket: this.db.prepare(`
+      getStatsByBucketFromDB: this.db.prepare(`
         SELECT status, COUNT(*) as count, COALESCE(SUM(file_size), 0) as totalSize
         FROM file_queue WHERE bucket_id = ? GROUP BY status
       `),
@@ -357,7 +428,10 @@ class FileQueueDB {
       let added = 0;
       for (const file of files) {
         const result = this._stmts.insertFile.run(file);
-        if (result.changes > 0) added++;
+        if (result.changes > 0) {
+          added++;
+          this._adjustStats(file.bucketId, file.status || 'pending', 1, file.fileSize || 0);
+        }
       }
       return added;
     });
@@ -368,6 +442,7 @@ class FileQueueDB {
       for (const row of rows) {
         const result = this._stmts.markInProgress.run({ id: row.id, workerId });
         if (result.changes > 0) {
+          this._transitionStats(row.bucket_id, 'pending', 'in_progress', row.file_size);
           row.status = 'in_progress';
           row.worker_id = workerId;
           claimed.push(row);
@@ -382,6 +457,7 @@ class FileQueueDB {
       for (const row of rows) {
         const result = this._stmts.markInProgress.run({ id: row.id, workerId });
         if (result.changes > 0) {
+          this._transitionStats(row.bucket_id, 'pending', 'in_progress', row.file_size);
           row.status = 'in_progress';
           row.worker_id = workerId;
           claimed.push(row);
@@ -396,6 +472,7 @@ class FileQueueDB {
       for (const row of rows) {
         const result = this._stmts.markInProgress.run({ id: row.id, workerId });
         if (result.changes > 0) {
+          this._transitionStats(row.bucket_id, 'pending', 'in_progress', row.file_size);
           row.status = 'in_progress';
           row.worker_id = workerId;
           claimed.push(row);
@@ -412,7 +489,9 @@ class FileQueueDB {
       destinationFolder: data.destinationFolder,
       workerCount: data.workerCount || config.workers.defaultCount,
     });
-    return this.getBucket(result.lastInsertRowid);
+    const id = result.lastInsertRowid;
+    this._bucketStats[id] = this._emptyStats();
+    return this.getBucket(id);
   }
 
   updateBucket(id, data) {
@@ -432,7 +511,10 @@ class FileQueueDB {
 
   deleteBucket(id) {
     this._stmts.deleteFilesByBucket.run(id);
-    return this._stmts.deleteBucket.run(id);
+    const result = this._stmts.deleteBucket.run(id);
+    delete this._bucketStats[id];
+    this._rebuildStatsCache();
+    return result;
   }
 
   getBucket(id) {
@@ -507,7 +589,8 @@ class FileQueueDB {
   }
 
   updateStatus(id, status, extras = {}) {
-    return this._stmts.updateStatus.run({
+    const meta = this._stmts.getFileMeta.get(id);
+    const result = this._stmts.updateStatus.run({
       id,
       status,
       sourceHash: extras.sourceHash || null,
@@ -517,32 +600,20 @@ class FileQueueDB {
       startedAt: extras.startedAt || null,
       completedAt: extras.completedAt || null,
     });
+    if (result.changes > 0 && meta && meta.status !== status) {
+      this._transitionStats(meta.bucket_id, meta.status, status, meta.file_size);
+    }
+    return result;
   }
 
   getStats() {
-    const rows = this._stmts.getStats.all();
-    return this._buildStats(rows);
+    return JSON.parse(JSON.stringify(this._globalStats));
   }
 
   getStatsByBucket(bucketId) {
-    const rows = this._stmts.getStatsByBucket.all(bucketId);
-    return this._buildStats(rows);
-  }
-
-  _buildStats(rows) {
-    const stats = {
-      pending: { count: 0, totalSize: 0 },
-      in_progress: { count: 0, totalSize: 0 },
-      completed: { count: 0, totalSize: 0 },
-      error: { count: 0, totalSize: 0 },
-      conflict: { count: 0, totalSize: 0 },
-    };
-    for (const row of rows) {
-      if (stats[row.status]) {
-        stats[row.status] = { count: row.count, totalSize: row.totalSize };
-      }
-    }
-    return stats;
+    const cached = this._bucketStats[bucketId];
+    if (cached) return JSON.parse(JSON.stringify(cached));
+    return this._emptyStats();
   }
 
   getFilesByStatus(status, limit = 100, offset = 0) {
@@ -568,49 +639,75 @@ class FileQueueDB {
   }
 
   resolveConflict(id, action) {
+    const meta = this._stmts.getFileMeta.get(id);
+    let result;
     if (action === 'overwrite') {
-      return this._stmts.resolveConflictOverwrite.run(id);
+      result = this._stmts.resolveConflictOverwrite.run(id);
+      if (result.changes > 0 && meta) {
+        this._transitionStats(meta.bucket_id, 'conflict', 'pending', meta.file_size);
+      }
+    } else if (action === 'skip') {
+      result = this._stmts.resolveConflictSkip.run(id);
+      if (result.changes > 0 && meta) {
+        this._transitionStats(meta.bucket_id, 'conflict', 'completed', meta.file_size);
+      }
+    } else {
+      throw new Error(`Ação inválida: ${action}`);
     }
-    if (action === 'skip') {
-      return this._stmts.resolveConflictSkip.run(id);
-    }
-    throw new Error(`Ação inválida: ${action}`);
+    return result;
   }
 
   resolveAllConflicts(action) {
+    let result;
     if (action === 'overwrite') {
-      return this._stmts.resolveAllConflictsOverwrite.run();
+      result = this._stmts.resolveAllConflictsOverwrite.run();
+    } else if (action === 'skip') {
+      result = this._stmts.resolveAllConflictsSkip.run();
+    } else {
+      throw new Error(`Ação inválida: ${action}`);
     }
-    if (action === 'skip') {
-      return this._stmts.resolveAllConflictsSkip.run();
-    }
-    throw new Error(`Ação inválida: ${action}`);
+    if (result.changes > 0) this._rebuildStatsCache();
+    return result;
   }
 
   resolveAllConflictsForBucket(bucketId, action) {
+    let result;
     if (action === 'overwrite') {
-      return this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId);
+      result = this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId);
+    } else if (action === 'skip') {
+      result = this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
+    } else {
+      throw new Error(`Ação inválida: ${action}`);
     }
-    if (action === 'skip') {
-      return this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
-    }
-    throw new Error(`Ação inválida: ${action}`);
+    if (result.changes > 0) this._rebuildStatsCache();
+    return result;
   }
 
   retryError(id) {
-    return this._stmts.retryError.run(id);
+    const meta = this._stmts.getFileMeta.get(id);
+    const result = this._stmts.retryError.run(id);
+    if (result.changes > 0 && meta) {
+      this._transitionStats(meta.bucket_id, 'error', 'pending', meta.file_size);
+    }
+    return result;
   }
 
   retryAllErrors() {
-    return this._stmts.retryAllErrors.run();
+    const result = this._stmts.retryAllErrors.run();
+    if (result.changes > 0) this._rebuildStatsCache();
+    return result;
   }
 
   retryAllErrorsForBucket(bucketId) {
-    return this._stmts.retryAllErrorsForBucket.run(bucketId);
+    const result = this._stmts.retryAllErrorsForBucket.run(bucketId);
+    if (result.changes > 0) this._rebuildStatsCache();
+    return result;
   }
 
   deleteFilesByBucket(bucketId) {
-    return this._stmts.deleteFilesByBucket.run(bucketId);
+    const result = this._stmts.deleteFilesByBucket.run(bucketId);
+    if (result.changes > 0) this._rebuildStatsCache();
+    return result;
   }
 
   getServiceState(key) {

@@ -13,7 +13,15 @@ class ScannerService {
     const bucket = this.bucketManager.getBucket(id);
     if (!bucket) throw new NotFoundError('Bucket não encontrado');
 
-    scanner.scanBucket(bucket).then((result) => {
+    let lastBroadcast = 0;
+    const onBatch = () => {
+      const now = Date.now();
+      if (now - lastBroadcast < 500) return;
+      lastBroadcast = now;
+      this.broadcast('stats-update', database.getStatsByBucket(id));
+    };
+
+    scanner.scanBucket(bucket, onBatch).then((result) => {
       this.broadcast('scan-complete', { bucketId: id, found: result.found, added: result.added });
       this.broadcast('stats-update', database.getStatsByBucket(id));
     }).catch((err) => {
@@ -24,7 +32,16 @@ class ScannerService {
   }
 
   scanAll() {
-    scanner.scanAll().then((result) => {
+    let lastBroadcast = 0;
+    const onBatch = (bucketId) => {
+      const now = Date.now();
+      if (now - lastBroadcast < 500) return;
+      lastBroadcast = now;
+      this.broadcast('stats-update', database.getStatsByBucket(bucketId));
+      this.broadcast('stats-update-global', database.getStats());
+    };
+
+    scanner.scanAll(onBatch).then((result) => {
       this.broadcast('scan-complete', { bucketId: null, totalFound: result.totalFound, totalAdded: result.totalAdded });
       this.broadcast('stats-update-global', database.getStats());
     }).catch((err) => {

@@ -65,12 +65,24 @@ class WorkerPool extends EventEmitter {
     this._loopTimer = null;
     this._stopping = false;
     this._workerIdCounter = 0;
+    this._cachedBucket = null;
+    this._cachedBucketName = null;
+    this._cachedFolderCounts = null;
+    this._folderCountsTimestamp = 0;
+    this._hadWorkLastLoop = false;
+  }
+
+  _refreshBucketCache() {
+    const bucket = database.getBucket(this.bucketId);
+    this._cachedBucket = bucket;
+    this._cachedBucketName = bucket ? bucket.name : String(this.bucketId);
   }
 
   start() {
     if (this.status === 'running') return;
     this.status = 'running';
     this._stopping = false;
+    this._refreshBucketCache();
     database.updateBucketStatus(this.bucketId, 'running');
     this._scheduleLoop();
     this.emit('service-change', { bucketId: this.bucketId });
@@ -90,6 +102,7 @@ class WorkerPool extends EventEmitter {
   resume() {
     if (this.status !== 'paused') return;
     this.status = 'running';
+    this._refreshBucketCache();
     database.updateBucketStatus(this.bucketId, 'running');
     this._scheduleLoop();
     this.emit('service-change', { bucketId: this.bucketId });
@@ -120,6 +133,7 @@ class WorkerPool extends EventEmitter {
   setWorkerCount(n) {
     const count = Math.max(1, Math.min(n, config.workers.maxCount));
     this.workerCount = count;
+    this._refreshBucketCache();
     database.updateBucket(this.bucketId, { workerCount: count });
     this.emit('service-change', { bucketId: this.bucketId });
     return count;
@@ -136,22 +150,29 @@ class WorkerPool extends EventEmitter {
 
   _scheduleLoop() {
     if (this._loopTimer) return;
+    const interval = (this._hadWorkLastLoop || this.activeWorkers > 0) ? 200 : 1000;
     this._loopTimer = setTimeout(() => {
       this._loopTimer = null;
       this._processLoop();
-    }, 200);
+    }, interval);
   }
 
   _processLoop() {
     if (this.status !== 'running') return;
 
-    const bucket = database.getBucket(this.bucketId);
+    const bucket = this._cachedBucket;
     if (!bucket || !bucket.source_folders || bucket.source_folders.length === 0) {
+      this._hadWorkLastLoop = false;
       this._scheduleLoop();
       return;
     }
 
-    const activeCounts = database.getActiveFolderCounts(this.bucketId);
+    const now = Date.now();
+    if (!this._cachedFolderCounts || now - this._folderCountsTimestamp > 1000) {
+      this._cachedFolderCounts = database.getActiveFolderCounts(this.bucketId);
+      this._folderCountsTimestamp = now;
+    }
+    const activeCounts = this._cachedFolderCounts;
     let targetFolder = null;
 
     for (const folder of bucket.source_folders) {
@@ -174,6 +195,10 @@ class WorkerPool extends EventEmitter {
             slots,
             ++this._workerIdCounter,
           );
+          if (files.length > 0) {
+            this._cachedFolderCounts = null;
+          }
+          this._hadWorkLastLoop = files.length > 0;
           for (const file of files) {
             this.activeWorkers++;
             this._processFile(file, file.worker_id).finally(() => {
@@ -181,16 +206,18 @@ class WorkerPool extends EventEmitter {
               this.emit('service-change', { bucketId: this.bucketId });
             });
           }
+          this._scheduleLoop();
+          return;
         }
       }
     }
 
+    this._hadWorkLastLoop = false;
     this._scheduleLoop();
   }
 
   async _processFile(file, workerId) {
-    const bucket = database.getBucket(this.bucketId);
-    const bucketName = bucket ? bucket.name : String(this.bucketId);
+    const bucketName = this._cachedBucketName || String(this.bucketId);
 
     try {
       this.emit('status-change', {
