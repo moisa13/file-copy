@@ -3,8 +3,6 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const config = require('../config');
 
-const SCHEMA_VERSION = 3;
-
 class FileQueueDB {
   constructor() {
     const dbDir = path.dirname(config.database.path);
