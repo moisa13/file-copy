@@ -99,15 +99,7 @@ async function scanBucket(bucket, onBatch) {
       totalFound += batch.length;
       totalAdded += added;
 
-      for (const file of batch) {
-        logger.log('pending', {
-          bucketName: bucket.name,
-          sourcePath: file.sourcePath,
-          sourceFolder: file.sourceFolder,
-          fileSize: file.fileSize,
-          message: 'Arquivo adicionado a fila',
-        });
-      }
+      logger.system(`[Bucket:${bucket.name}] Lote adicionado a fila: ${batch.length} encontrado(s), ${added} novo(s)`);
 
       if (onBatch) onBatch({ found: totalFound, added: totalAdded });
     },

@@ -205,7 +205,7 @@ class WorkerPool extends EventEmitter {
       );
 
       if (result.result === 'error') {
-        database.updateStatus(file.id, 'error', {
+        database.updateStatusWithMeta(file.id, 'error', this.bucketId, 'in_progress', file.file_size, {
           errorMessage: result.message,
         });
         this.emit('status-change', {
@@ -226,7 +226,7 @@ class WorkerPool extends EventEmitter {
       }
 
       if (result.result === 'identical') {
-        database.updateStatus(file.id, 'completed', {
+        database.updateStatusWithMeta(file.id, 'completed', this.bucketId, 'in_progress', file.file_size, {
           sourceHash: result.sourceHash,
           destinationHash: result.destHash,
           completedAt: new Date().toISOString(),
@@ -250,7 +250,7 @@ class WorkerPool extends EventEmitter {
       }
 
       if (result.result === 'conflict') {
-        database.updateStatus(file.id, 'conflict', {
+        database.updateStatusWithMeta(file.id, 'conflict', this.bucketId, 'in_progress', file.file_size, {
           sourceHash: result.sourceHash,
           destinationHash: result.destHash,
         });
@@ -273,7 +273,7 @@ class WorkerPool extends EventEmitter {
       }
 
       if (result.result === 'integrity_error') {
-        database.updateStatus(file.id, 'error', {
+        database.updateStatusWithMeta(file.id, 'error', this.bucketId, 'in_progress', file.file_size, {
           sourceHash: result.sourceHash,
           destinationHash: result.destHash,
           errorMessage: 'Falha de integridade: hash pos-copia nao confere',
@@ -296,7 +296,7 @@ class WorkerPool extends EventEmitter {
         return;
       }
 
-      database.updateStatus(file.id, 'completed', {
+      database.updateStatusWithMeta(file.id, 'completed', this.bucketId, 'in_progress', file.file_size, {
         sourceHash: result.sourceHash,
         destinationHash: result.destHash,
         completedAt: new Date().toISOString(),
@@ -317,7 +317,7 @@ class WorkerPool extends EventEmitter {
         message: 'Copia finalizada com sucesso',
       });
     } catch (err) {
-      database.updateStatus(file.id, 'error', {
+      database.updateStatusWithMeta(file.id, 'error', this.bucketId, 'in_progress', file.file_size, {
         errorMessage: err.message,
       });
       this.emit('status-change', {

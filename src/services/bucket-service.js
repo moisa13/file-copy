@@ -66,7 +66,7 @@ class BucketService {
   getFolders(id) {
     const bucket = this.bucketManager.getBucket(id);
     if (!bucket) throw new NotFoundError('Bucket não encontrado');
-    const statsMap = database.getStatsByBucketGroupedByFolder(id);
+    const statsMap = database.getFolderStatsCached(id);
     return bucket.source_folders.map((f) => {
       const resolved = path.resolve(f);
       return (

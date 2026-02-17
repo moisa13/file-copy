@@ -274,10 +274,22 @@ function createServer(bucketManager) {
     '/api/buckets/:id/export/:status',
     validate(bucketStatusParamsSchema, 'params'),
     asyncHandler(async (req, res) => {
-      const files = bucketService.exportFiles(req.validated.params.id, req.validated.params.status);
-      sendCsv(res, files, req.validated.params.status);
+      const { id, status } = req.validated.params;
+      const bucket = bucketService.getBucket(id);
+      if (!bucket) return res.status(404).json({ error: 'Bucket não encontrado' });
+      const iterator = database.iterateFilesByStatus(status, id);
+      sendCsvStream(res, iterator, status);
     }),
   );
+
+  app.get('/api/buckets-summary', (_req, res) => {
+    const allBuckets = bucketService.getAllBuckets();
+    const summary = allBuckets.map((b) => {
+      const stats = database.getStatsByBucket(b.id);
+      return { id: b.id, name: b.name, poolStatus: b.poolStatus, stats };
+    });
+    res.json(summary);
+  });
 
   app.get('/api/stats', (_req, res) => {
     res.json(fileService.getGlobalStats());
@@ -344,16 +356,20 @@ function createServer(bucketManager) {
     '/api/export/:status',
     validate(statusParamsSchema, 'params'),
     asyncHandler(async (req, res) => {
-      const files = fileService.exportFiles(req.validated.params.status);
-      sendCsv(res, files, req.validated.params.status);
+      const iterator = database.iterateFilesByStatus(req.validated.params.status);
+      sendCsvStream(res, iterator, req.validated.params.status);
     }),
   );
 
-  function sendCsv(res, files, status) {
+  function sendCsvStream(res, iterator, status) {
     const header =
       'id;arquivo;pasta_origem;caminho_destino;tamanho_bytes;status;hash_origem;hash_destino;erro;criado_em;atualizado_em';
-    const rows = files.map((f) => {
-      return [
+    const filename = `arquivos-${status}-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.write('\uFEFF' + header + '\n');
+    for (const f of iterator) {
+      const row = [
         f.id,
         f.relative_path,
         f.source_folder,
@@ -366,12 +382,9 @@ function createServer(bucketManager) {
         f.created_at,
         f.updated_at,
       ].join(';');
-    });
-    const csv = [header, ...rows].join('\n');
-    const filename = `arquivos-${status}-${new Date().toISOString().slice(0, 10)}.csv`;
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send('\uFEFF' + csv);
+      res.write(row + '\n');
+    }
+    res.end();
   }
 
   app.use(errorHandler(broadcast));
@@ -417,8 +430,22 @@ function createServer(bucketManager) {
     scheduleStatsBroadcast(data.bucketId);
   });
 
+  const _progressBuffer = new Map();
+  let _progressFlushTimer = null;
+
+  function flushProgressBuffer() {
+    _progressFlushTimer = null;
+    if (_progressBuffer.size === 0) return;
+    const batch = Array.from(_progressBuffer.values());
+    _progressBuffer.clear();
+    broadcast('copy-progress-batch', batch);
+  }
+
   bucketManager.on('copy-progress', (data) => {
-    broadcast('copy-progress', data);
+    _progressBuffer.set(data.fileId, data);
+    if (!_progressFlushTimer) {
+      _progressFlushTimer = setTimeout(flushProgressBuffer, 500);
+    }
   });
 
   bucketManager.on('service-change', (data) => {
@@ -447,6 +474,10 @@ function createServer(bucketManager) {
     if (_flushStatsTimer) {
       clearTimeout(_flushStatsTimer);
       _flushStatsTimer = null;
+    }
+    if (_progressFlushTimer) {
+      clearTimeout(_progressFlushTimer);
+      _progressFlushTimer = null;
     }
     wss.clients.forEach((client) => client.terminate());
     wss.close();

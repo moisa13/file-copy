@@ -13,11 +13,13 @@ class FileQueueDB {
     this.db.pragma('busy_timeout = 5000');
     this.db.pragma('synchronous = NORMAL');
     this.db.pragma('cache_size = -64000');
-    this.db.pragma('mmap_size = 268435456');
+    this.db.pragma('mmap_size = 1073741824');
+    this.db.pragma('wal_autocheckpoint = 10000');
     this.db.pragma('temp_store = MEMORY');
 
     this._globalStats = this._emptyStats();
     this._bucketStats = {};
+    this._folderStatsCache = new Map();
 
     this._createSchema();
     this._migrate();
@@ -120,9 +122,7 @@ class FileQueueDB {
         UNIQUE(source_path, destination_path, bucket_id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_status ON file_queue(status);
       CREATE INDEX IF NOT EXISTS idx_source_folder ON file_queue(source_folder);
-      CREATE INDEX IF NOT EXISTS idx_bucket_id ON file_queue(bucket_id);
     `);
   }
 
@@ -197,6 +197,15 @@ class FileQueueDB {
         CREATE INDEX IF NOT EXISTS idx_updated ON file_queue(updated_at DESC);
       `);
       this._setSchemaVersion(4);
+    }
+
+    if (currentVersion < 5) {
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_status;
+        DROP INDEX IF EXISTS idx_bucket_id;
+        DROP INDEX IF EXISTS idx_bucket_status;
+      `);
+      this._setSchemaVersion(5);
     }
   }
 
@@ -568,7 +577,11 @@ class FileQueueDB {
       status: f.status || 'pending',
       errorMessage: f.errorMessage || null,
     }));
-    return this._addFilesTransaction(enriched);
+    const added = this._addFilesTransaction(enriched);
+    if (added > 0) {
+      this._invalidateFolderStatsCache(bucketId);
+    }
+    return added;
   }
 
   getNextPending(limit = 1, workerId = 0) {
@@ -627,6 +640,7 @@ class FileQueueDB {
     });
     if (result.changes > 0 && meta && meta.status !== status) {
       this._transitionStats(meta.bucket_id, meta.status, status, meta.file_size);
+      this._invalidateFolderStatsCache(meta.bucket_id);
     }
     return result;
   }
@@ -789,6 +803,85 @@ class FileQueueDB {
 
   setServiceState(key, value) {
     return this._stmts.setServiceState.run({ key, value: String(value) });
+  }
+
+  updateStatusWithMeta(id, status, bucketId, oldStatus, fileSize, extras = {}) {
+    const result = this._stmts.updateStatus.run({
+      id,
+      status,
+      sourceHash: extras.sourceHash || null,
+      destinationHash: extras.destinationHash || null,
+      errorMessage: extras.errorMessage || null,
+      workerId: extras.workerId != null ? extras.workerId : null,
+      startedAt: extras.startedAt || null,
+      completedAt: extras.completedAt || null,
+    });
+    if (result.changes > 0 && oldStatus !== status) {
+      this._transitionStats(bucketId, oldStatus, status, fileSize);
+      this._invalidateFolderStatsCache(bucketId);
+    }
+    return result;
+  }
+
+  getFolderStatsCached(bucketId) {
+    const cached = this._folderStatsCache.get(bucketId);
+    if (cached && Date.now() - cached.timestamp < 2000) {
+      return cached.data;
+    }
+    const data = this.getStatsByBucketGroupedByFolder(bucketId);
+    this._folderStatsCache.set(bucketId, { data, timestamp: Date.now() });
+    return data;
+  }
+
+  _invalidateFolderStatsCache(bucketId) {
+    if (bucketId != null) {
+      this._folderStatsCache.delete(bucketId);
+    }
+  }
+
+  iterateFilesByStatus(status, bucketId) {
+    if (bucketId) {
+      if (!status || status === 'all') {
+        return this.db
+          .prepare(
+            `SELECT f.*, b.name as bucket_name FROM file_queue f
+             LEFT JOIN buckets b ON f.bucket_id = b.id
+             WHERE f.bucket_id = @bucketId
+             ORDER BY f.updated_at DESC`,
+          )
+          .iterate({ bucketId });
+      }
+      return this.db
+        .prepare(
+          `SELECT f.*, b.name as bucket_name FROM file_queue f
+           LEFT JOIN buckets b ON f.bucket_id = b.id
+           WHERE f.status = @status AND f.bucket_id = @bucketId
+           ORDER BY f.updated_at DESC`,
+        )
+        .iterate({ status, bucketId });
+    }
+    if (!status || status === 'all') {
+      return this.db
+        .prepare(
+          `SELECT f.*, b.name as bucket_name FROM file_queue f
+           LEFT JOIN buckets b ON f.bucket_id = b.id
+           ORDER BY f.updated_at DESC`,
+        )
+        .iterate();
+    }
+    return this.db
+      .prepare(
+        `SELECT f.*, b.name as bucket_name FROM file_queue f
+         LEFT JOIN buckets b ON f.bucket_id = b.id
+         WHERE f.status = @status
+         ORDER BY f.updated_at DESC`,
+      )
+      .iterate({ status });
+  }
+
+  runMaintenance() {
+    this.db.exec('ANALYZE');
+    this.db.pragma('wal_checkpoint(PASSIVE)');
   }
 
   close() {

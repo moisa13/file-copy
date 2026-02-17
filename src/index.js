@@ -35,6 +35,18 @@ async function main() {
 
   startStatsTimer();
 
+  const maintenanceInterval = setInterval(
+    () => {
+      try {
+        database.runMaintenance();
+        logger.system('Manutencao periodica executada (ANALYZE + WAL checkpoint)');
+      } catch (err) {
+        logger.system(`Erro na manutencao periodica: ${err.message}`);
+      }
+    },
+    10 * 60 * 1000,
+  );
+
   bucketManager.restoreState();
 
   logger.system('Sistema pronto');
@@ -52,6 +64,8 @@ async function main() {
       console.log('Timeout de shutdown (30s). Forcando encerramento.');
       process.exit(1);
     }, 30000);
+
+    clearInterval(maintenanceInterval);
 
     try {
       await bucketManager.stopAll();
