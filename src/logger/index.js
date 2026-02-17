@@ -31,6 +31,7 @@ function filenameGenerator(channel) {
 class Logger {
   constructor() {
     this.streams = {};
+    this._drainState = {};
     this._init();
   }
 
@@ -43,6 +44,19 @@ class Logger {
         maxFiles: config.logging.maxFiles,
         path: config.logging.directory,
       });
+      this._drainState[channel] = true;
+      this.streams[channel].on('drain', () => {
+        this._drainState[channel] = true;
+      });
+    }
+  }
+
+  _write(channel, line) {
+    const stream = this.streams[channel];
+    if (!stream) return;
+    const ok = stream.write(line);
+    if (!ok) {
+      this._drainState[channel] = false;
     }
   }
 
@@ -60,21 +74,17 @@ class Logger {
     const bucketLabel = data.bucketName ? `[Bucket:${data.bucketName}] ` : '';
     const line = `[${timestamp}] [${statusLabel}] ${bucketLabel}[Worker:${workerId}] Arquivo: ${filePath} | Origem: ${sourceFolder} | Tamanho: ${fileSize} | Hash: ${hash} | ${message}\n`;
 
-    if (this.streams.geral) {
-      this.streams.geral.write(line);
-    }
+    this._write('geral', line);
 
-    if (channel !== 'geral' && this.streams[channel]) {
-      this.streams[channel].write(line);
+    if (channel !== 'geral') {
+      this._write(channel, line);
     }
   }
 
   system(message) {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] [SYSTEM] ${message}\n`;
-    if (this.streams.geral) {
-      this.streams.geral.write(line);
-    }
+    this._write('geral', line);
   }
 
   close() {

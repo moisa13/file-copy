@@ -65,13 +65,22 @@ async function scanDirectory(dirPath, sourceFolder, destinationFolder, ctx) {
     const relativePath = path.relative(sourceFolder, fullPath);
     const destinationPath = path.join(destinationFolder, relativePath);
 
+    let status = 'pending';
+    try {
+      const destStat = await fs.promises.stat(destinationPath);
+      if (destStat.size === stat.size) {
+        status = 'completed';
+        ctx.alreadySynced++;
+      }
+    } catch (_) {}
+
     ctx.buffer.push({
       sourcePath: fullPath,
       sourceFolder,
       relativePath,
       destinationPath,
       fileSize: stat.size,
-      status: 'pending',
+      status,
       errorMessage: null,
     });
 
@@ -89,25 +98,26 @@ async function scanBucket(bucket, onBatch) {
   let totalFound = 0;
   let totalAdded = 0;
 
+  let totalSynced = 0;
+
   const ctx = {
     buffer: [],
+    alreadySynced: 0,
     flush() {
       const batch = ctx.buffer.splice(0);
       if (batch.length === 0) return;
 
+      const synced = ctx.alreadySynced;
+      ctx.alreadySynced = 0;
+
       const added = database.addFilesForBucket(bucket.id, batch);
       totalFound += batch.length;
       totalAdded += added;
+      totalSynced += synced;
 
-      for (const file of batch) {
-        logger.log('pending', {
-          bucketName: bucket.name,
-          sourcePath: file.sourcePath,
-          sourceFolder: file.sourceFolder,
-          fileSize: file.fileSize,
-          message: 'Arquivo adicionado a fila',
-        });
-      }
+      logger.system(
+        `[Bucket:${bucket.name}] Lote adicionado a fila: ${batch.length} encontrado(s), ${added} novo(s), ${synced} ja sincronizado(s)`,
+      );
 
       if (onBatch) onBatch({ found: totalFound, added: totalAdded });
     },
@@ -129,10 +139,10 @@ async function scanBucket(bucket, onBatch) {
   ctx.flush();
 
   logger.system(
-    `[Bucket:${bucket.name}] Varredura concluida: ${totalFound} arquivo(s) encontrado(s), ${totalAdded} novo(s) adicionado(s) a fila`,
+    `[Bucket:${bucket.name}] Varredura concluida: ${totalFound} arquivo(s) encontrado(s), ${totalAdded} novo(s) adicionado(s) a fila, ${totalSynced} ja sincronizado(s)`,
   );
 
-  return { found: totalFound, added: totalAdded };
+  return { found: totalFound, added: totalAdded, synced: totalSynced };
 }
 
 async function scanAll(onBatch) {
@@ -140,19 +150,21 @@ async function scanAll(onBatch) {
   const results = {};
   let totalFound = 0;
   let totalAdded = 0;
+  let totalSynced = 0;
 
   for (const bucket of buckets) {
     const result = await scanBucket(bucket, onBatch ? (partial) => onBatch(bucket.id, partial) : null);
     results[bucket.id] = { name: bucket.name, ...result };
     totalFound += result.found;
     totalAdded += result.added;
+    totalSynced += result.synced || 0;
   }
 
   logger.system(
-    `Varredura global concluida: ${buckets.length} bucket(s), ${totalFound} arquivo(s) encontrado(s), ${totalAdded} novo(s)`,
+    `Varredura global concluida: ${buckets.length} bucket(s), ${totalFound} arquivo(s) encontrado(s), ${totalAdded} novo(s), ${totalSynced} ja sincronizado(s)`,
   );
 
-  return { buckets: results, totalFound, totalAdded };
+  return { buckets: results, totalFound, totalAdded, synced: totalSynced };
 }
 
 module.exports = { scanBucket, scanAll };

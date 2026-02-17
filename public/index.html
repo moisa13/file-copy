@@ -711,6 +711,38 @@ let ws = null;
 let lastServiceState = null;
 let scanningBtn = null;
 const fileProgress = new Map();
+let _tableFingerprint = '';
+
+function debounce(fn, ms) {
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+
+function throttle(fn, ms) {
+  let last = 0;
+  let timer;
+  return function(...args) {
+    const now = Date.now();
+    const remaining = ms - (now - last);
+    clearTimeout(timer);
+    if (remaining <= 0) {
+      last = now;
+      fn.apply(this, args);
+    } else {
+      timer = setTimeout(() => {
+        last = Date.now();
+        fn.apply(this, args);
+      }, remaining);
+    }
+  };
+}
+
+const debouncedLoadFiles = debounce(() => loadFiles(), 500);
+const throttledLoadFolderStats = throttle(() => loadFolderStats(), 3000);
+const throttledLoadBucketsSummary = throttle(() => loadBucketsSummary(), 3000);
 
 function formatSize(bytes) {
   if (!bytes || bytes === 0) return '0 B';
@@ -844,9 +876,13 @@ function updateFileProgress(data) {
 function renderTable(files) {
   const tbody = document.getElementById('tableBody');
   if (!files || files.length === 0) {
+    _tableFingerprint = '';
     tbody.innerHTML = '<tr class="empty-row"><td colspan="8">Nenhum arquivo encontrado</td></tr>';
     return;
   }
+  const fingerprint = files.map(f => f.id + ':' + f.status + ':' + f.updated_at).join('|');
+  if (fingerprint === _tableFingerprint) return;
+  _tableFingerprint = fingerprint;
   tbody.innerHTML = files.map(f => {
     let actions = '';
     if (f.status === 'conflict') {
@@ -1045,12 +1081,11 @@ async function loadBucketsSummary() {
     return;
   }
 
-  const statsPromises = buckets.map(b => api('GET', `/api/buckets/${b.id}/stats`));
-  const allStats = await Promise.all(statsPromises);
+  const summary = await api('GET', '/api/buckets-summary');
 
   container.style.display = 'block';
-  body.innerHTML = buckets.map((b, i) => {
-    const s = allStats[i];
+  body.innerHTML = summary.map(item => {
+    const s = item.stats;
     const total = (s.pending?.count || 0) + (s.in_progress?.count || 0) +
       (s.completed?.count || 0) + (s.error?.count || 0) + (s.conflict?.count || 0);
     const done = s.completed?.count || 0;
@@ -1067,7 +1102,7 @@ async function loadBucketsSummary() {
     else if (hasErrors && isDone) indicatorClass = 'has-errors';
     else if (isDone) indicatorClass = 'done';
 
-    const poolStatus = b.poolStatus?.status || 'stopped';
+    const poolStatus = item.poolStatus?.status || 'stopped';
     const badgeLabels = { running: 'EXEC', paused: 'PAUSA', stopped: 'PARADO' };
     let badgeLabel = badgeLabels[poolStatus] || poolStatus;
     if (poolStatus === 'running' && pending === 0 && inProg === 0) badgeLabel = 'OCIOSO';
@@ -1075,7 +1110,7 @@ async function loadBucketsSummary() {
 
     return `<div class="folder-row">
       <span class="folder-indicator ${indicatorClass}"></span>
-      <span class="folder-name" title="${b.name}">${b.name}</span>
+      <span class="folder-name" title="${item.name}">${item.name}</span>
       <span class="service-badge badge-${badgeCls}" style="font-size:10px;padding:2px 8px">${badgeLabel}</span>
       <div class="folder-progress-bar"><div class="folder-progress-fill" style="width:${pct}%"></div></div>
       <span class="folder-pct">${pct}%</span>
@@ -1319,14 +1354,14 @@ function connectWS() {
     if (msg.event === 'stats-update') {
       if (currentBucketId && msg.data) {
         updateStats(msg.data);
-        loadFolderStats();
+        throttledLoadFolderStats();
       }
     }
 
     if (msg.event === 'stats-update-global') {
       if (!currentBucketId && msg.data) {
         updateStats(msg.data);
-        loadBucketsSummary();
+        throttledLoadBucketsSummary();
       }
     }
 
@@ -1340,12 +1375,20 @@ function connectWS() {
       updateFileProgress(msg.data);
     }
 
+    if (msg.event === 'copy-progress-batch') {
+      if (Array.isArray(msg.data)) {
+        for (const item of msg.data) {
+          updateFileProgress(item);
+        }
+      }
+    }
+
     if (msg.event === 'status-update') {
       if (msg.data && msg.data.status !== 'in_progress') {
         fileProgress.delete(msg.data.fileId);
       }
       if (!currentBucketId || (msg.data && msg.data.bucketId === currentBucketId)) {
-        loadFiles();
+        debouncedLoadFiles();
       }
     }
 
