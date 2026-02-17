@@ -38,7 +38,7 @@ module.exports = {
     host: env('HOST', '0.0.0.0'),
   },
 
-  hashAlgorithm: env('HASH_ALGORITHM', 'sha256'),
+  hashAlgorithm: env('HASH_ALGORITHM', 'xxhash64'),
 
   scanner: {
     recursive: envBool('SCANNER_RECURSIVE', true),

@@ -11,6 +11,10 @@ class FileQueueDB {
     this.db = new Database(config.database.path);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('cache_size = -64000');
+    this.db.pragma('mmap_size = 268435456');
+    this.db.pragma('temp_store = MEMORY');
 
     this._globalStats = this._emptyStats();
     this._bucketStats = {};
@@ -184,6 +188,15 @@ class FileQueueDB {
           ON file_queue(bucket_id, status);
       `);
       this._setSchemaVersion(3);
+    }
+
+    if (currentVersion < 4) {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_status_updated ON file_queue(status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_bucket_updated ON file_queue(bucket_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_updated ON file_queue(updated_at DESC);
+      `);
+      this._setSchemaVersion(4);
     }
   }
 
@@ -422,6 +435,19 @@ class FileQueueDB {
       getBucket: this.db.prepare(`SELECT * FROM buckets WHERE id = ?`),
 
       getAllBuckets: this.db.prepare(`SELECT * FROM buckets ORDER BY id`),
+
+      sumSizeByStatus: this.db.prepare(`
+        SELECT COALESCE(SUM(file_size), 0) as totalSize FROM file_queue WHERE status = ?
+      `),
+
+      sumSizeByStatusForBucket: this.db.prepare(`
+        SELECT COALESCE(SUM(file_size), 0) as totalSize FROM file_queue WHERE status = ? AND bucket_id = ?
+      `),
+
+      statsByBucketForDelete: this.db.prepare(`
+        SELECT status, COUNT(*) as count, COALESCE(SUM(file_size), 0) as totalSize
+        FROM file_queue WHERE bucket_id = ? GROUP BY status
+      `),
     };
 
     this._addFilesTransaction = this.db.transaction((files) => {
@@ -510,10 +536,9 @@ class FileQueueDB {
   }
 
   deleteBucket(id) {
-    this._stmts.deleteFilesByBucket.run(id);
+    this.deleteFilesByBucket(id);
     const result = this._stmts.deleteBucket.run(id);
     delete this._bucketStats[id];
-    this._rebuildStatsCache();
     return result;
   }
 
@@ -658,28 +683,45 @@ class FileQueueDB {
   }
 
   resolveAllConflicts(action) {
-    let result;
-    if (action === 'overwrite') {
-      result = this._stmts.resolveAllConflictsOverwrite.run();
-    } else if (action === 'skip') {
-      result = this._stmts.resolveAllConflictsSkip.run();
-    } else {
+    if (action !== 'overwrite' && action !== 'skip') {
       throw new Error(`Ação inválida: ${action}`);
     }
-    if (result.changes > 0) this._rebuildStatsCache();
+    const totalSize = this._stmts.sumSizeByStatus.get('conflict').totalSize;
+    const newStatus = action === 'overwrite' ? 'pending' : 'completed';
+    const result = action === 'overwrite'
+      ? this._stmts.resolveAllConflictsOverwrite.run()
+      : this._stmts.resolveAllConflictsSkip.run();
+    if (result.changes > 0) {
+      this._adjustStats(null, 'conflict', -result.changes, -totalSize);
+      this._adjustStats(null, newStatus, result.changes, totalSize);
+      for (const bucketId of Object.keys(this._bucketStats)) {
+        const bs = this._bucketStats[bucketId];
+        if (bs.conflict.count > 0) {
+          const bSize = bs.conflict.totalSize;
+          const bCount = bs.conflict.count;
+          bs.conflict.count = 0;
+          bs.conflict.totalSize = 0;
+          bs[newStatus].count += bCount;
+          bs[newStatus].totalSize += bSize;
+        }
+      }
+    }
     return result;
   }
 
   resolveAllConflictsForBucket(bucketId, action) {
-    let result;
-    if (action === 'overwrite') {
-      result = this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId);
-    } else if (action === 'skip') {
-      result = this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
-    } else {
+    if (action !== 'overwrite' && action !== 'skip') {
       throw new Error(`Ação inválida: ${action}`);
     }
-    if (result.changes > 0) this._rebuildStatsCache();
+    const totalSize = this._stmts.sumSizeByStatusForBucket.get('conflict', bucketId).totalSize;
+    const newStatus = action === 'overwrite' ? 'pending' : 'completed';
+    const result = action === 'overwrite'
+      ? this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId)
+      : this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
+    if (result.changes > 0) {
+      this._adjustStats(bucketId, 'conflict', -result.changes, -totalSize);
+      this._adjustStats(bucketId, newStatus, result.changes, totalSize);
+    }
     return result;
   }
 
@@ -693,20 +735,48 @@ class FileQueueDB {
   }
 
   retryAllErrors() {
+    const totalSize = this._stmts.sumSizeByStatus.get('error').totalSize;
     const result = this._stmts.retryAllErrors.run();
-    if (result.changes > 0) this._rebuildStatsCache();
+    if (result.changes > 0) {
+      this._adjustStats(null, 'error', -result.changes, -totalSize);
+      this._adjustStats(null, 'pending', result.changes, totalSize);
+      for (const bucketId of Object.keys(this._bucketStats)) {
+        const bs = this._bucketStats[bucketId];
+        if (bs.error.count > 0) {
+          const bSize = bs.error.totalSize;
+          const bCount = bs.error.count;
+          bs.error.count = 0;
+          bs.error.totalSize = 0;
+          bs.pending.count += bCount;
+          bs.pending.totalSize += bSize;
+        }
+      }
+    }
     return result;
   }
 
   retryAllErrorsForBucket(bucketId) {
+    const totalSize = this._stmts.sumSizeByStatusForBucket.get('error', bucketId).totalSize;
     const result = this._stmts.retryAllErrorsForBucket.run(bucketId);
-    if (result.changes > 0) this._rebuildStatsCache();
+    if (result.changes > 0) {
+      this._adjustStats(bucketId, 'error', -result.changes, -totalSize);
+      this._adjustStats(bucketId, 'pending', result.changes, totalSize);
+    }
     return result;
   }
 
   deleteFilesByBucket(bucketId) {
+    const rows = this._stmts.statsByBucketForDelete.all(bucketId);
     const result = this._stmts.deleteFilesByBucket.run(bucketId);
-    if (result.changes > 0) this._rebuildStatsCache();
+    if (result.changes > 0) {
+      for (const row of rows) {
+        if (this._globalStats[row.status]) {
+          this._globalStats[row.status].count -= row.count;
+          this._globalStats[row.status].totalSize -= row.totalSize;
+        }
+      }
+      this._bucketStats[bucketId] = this._emptyStats();
+    }
     return result;
   }
 
