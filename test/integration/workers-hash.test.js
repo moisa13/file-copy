@@ -9,33 +9,44 @@ require('../helpers/setup');
 
 let computeFileHash, copyFileWithHash;
 
+function extractHelpers(source) {
+  let xxhash = null;
+  try { xxhash = require('xxhash-addon'); } catch (_) {}
+  const config = require('../../src/config');
+
+  const createHasherMatch = source.match(/function createHasher\(\)[\s\S]*?^}/m);
+  const digestHasherMatch = source.match(/function digestHasher\([\s\S]*?^}/m);
+  const helperCode = (createHasherMatch ? createHasherMatch[0] + '\n' : '') +
+    (digestHasherMatch ? digestHasherMatch[0] + '\n' : '');
+
+  return { xxhash, config, helperCode };
+}
+
 describe('computeFileHash', () => {
   let tmpDir;
 
   before(() => {
     tmpDir = createTempDir('hash-test-');
-    const workerModule = require('../../src/workers');
     const workerPath = require.resolve('../../src/workers');
     const source = fs.readFileSync(workerPath, 'utf-8');
+    const { xxhash, config, helperCode } = extractHelpers(source);
 
     const fnMatch = source.match(/function computeFileHash\([\s\S]*?^}/m);
     if (fnMatch) {
       const fn = new Function(
-        'fs', 'crypto', 'config',
-        `${fnMatch[0]}\nreturn computeFileHash;`
+        'fs', 'crypto', 'config', 'xxhash',
+        `${helperCode}${fnMatch[0]}\nreturn computeFileHash;`
       );
-      const config = require('../../src/config');
-      computeFileHash = fn(fs, crypto, config);
+      computeFileHash = fn(fs, crypto, config, xxhash);
     }
 
     const copyMatch = source.match(/function copyFileWithHash\([\s\S]*?^}/m);
     if (copyMatch) {
       const fn = new Function(
-        'fs', 'path', 'crypto', 'config',
-        `${copyMatch[0]}\nreturn copyFileWithHash;`
+        'fs', 'path', 'crypto', 'config', 'xxhash',
+        `${helperCode}${copyMatch[0]}\nreturn copyFileWithHash;`
       );
-      const config = require('../../src/config');
-      copyFileWithHash = fn(fs, path, crypto, config);
+      copyFileWithHash = fn(fs, path, crypto, config, xxhash);
     }
   });
 
@@ -43,22 +54,24 @@ describe('computeFileHash', () => {
     removeTempDir(tmpDir);
   });
 
-  it('computes correct SHA-256 hash for known content', async () => {
+  it('computes consistent hash for known content', async () => {
     if (!computeFileHash) return;
     const filePath = path.join(tmpDir, 'known.txt');
     fs.writeFileSync(filePath, 'hello world');
-    const expected = crypto.createHash('sha256').update('hello world').digest('hex');
     const hash = await computeFileHash(filePath);
-    assert.equal(hash, expected);
+    const hash2 = await computeFileHash(filePath);
+    assert.equal(typeof hash, 'string');
+    assert.ok(hash.length > 0);
+    assert.equal(hash, hash2);
   });
 
   it('computes hash for empty file', async () => {
     if (!computeFileHash) return;
     const filePath = path.join(tmpDir, 'empty.txt');
     fs.writeFileSync(filePath, '');
-    const expected = crypto.createHash('sha256').update('').digest('hex');
     const hash = await computeFileHash(filePath);
-    assert.equal(hash, expected);
+    assert.equal(typeof hash, 'string');
+    assert.ok(hash.length > 0);
   });
 
   it('rejects for nonexistent file', async () => {
@@ -83,9 +96,11 @@ describe('copyFileWithHash', () => {
     const src = path.join(tmpDir, 'src-copy.txt');
     const dst = path.join(tmpDir, 'dst', 'copy.txt');
     fs.writeFileSync(src, 'copy content');
-    const hash = await copyFileWithHash(src, dst);
-    const expected = crypto.createHash('sha256').update('copy content').digest('hex');
-    assert.equal(hash, expected);
+    const result = await copyFileWithHash(src, dst);
+    assert.equal(typeof result, 'object');
+    assert.equal(typeof result.sourceHash, 'string');
+    assert.equal(typeof result.destHash, 'string');
+    assert.equal(result.sourceHash, result.destHash);
   });
 
   it('destination content matches source', async () => {

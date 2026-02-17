@@ -4,10 +4,24 @@ const config = require('../config');
 const database = require('../queue/database');
 const logger = require('../logger');
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 5000;
+const DIR_CONCURRENCY = 8;
 
 function shouldIgnore(filename) {
   return config.scanner.ignorePatterns.some((pattern) => filename === pattern);
+}
+
+async function parallelMap(items, fn, concurrency) {
+  const results = [];
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function scanDirectory(dirPath, sourceFolder, destinationFolder, ctx) {
@@ -23,43 +37,55 @@ async function scanDirectory(dirPath, sourceFolder, destinationFolder, ctx) {
     return;
   }
 
+  const dirs = [];
+  const files = [];
+
   for (const entry of entries) {
     if (shouldIgnore(entry.name)) continue;
-
-    const fullPath = path.join(dirPath, entry.name);
-
     if (entry.isDirectory() && config.scanner.recursive) {
-      await scanDirectory(fullPath, sourceFolder, destinationFolder, ctx);
+      dirs.push(path.join(dirPath, entry.name));
     } else if (entry.isFile()) {
-      let stat;
-      try {
-        stat = await fs.promises.stat(fullPath);
-      } catch (err) {
-        logger.log('error', {
-          sourcePath: fullPath,
-          sourceFolder,
-          message: `Erro ao obter stat: ${err.message}`,
-        });
-        continue;
-      }
+      files.push(path.join(dirPath, entry.name));
+    }
+  }
 
-      const relativePath = path.relative(sourceFolder, fullPath);
-      const destinationPath = path.join(destinationFolder, relativePath);
-
-      ctx.buffer.push({
+  for (const fullPath of files) {
+    let stat;
+    try {
+      stat = await fs.promises.stat(fullPath);
+    } catch (err) {
+      logger.log('error', {
         sourcePath: fullPath,
         sourceFolder,
-        relativePath,
-        destinationPath,
-        fileSize: stat.size,
-        status: 'pending',
-        errorMessage: null,
+        message: `Erro ao obter stat: ${err.message}`,
       });
-
-      if (ctx.buffer.length >= BATCH_SIZE) {
-        ctx.flush();
-      }
+      continue;
     }
+
+    const relativePath = path.relative(sourceFolder, fullPath);
+    const destinationPath = path.join(destinationFolder, relativePath);
+
+    ctx.buffer.push({
+      sourcePath: fullPath,
+      sourceFolder,
+      relativePath,
+      destinationPath,
+      fileSize: stat.size,
+      status: 'pending',
+      errorMessage: null,
+    });
+
+    if (ctx.buffer.length >= BATCH_SIZE) {
+      ctx.flush();
+    }
+  }
+
+  if (dirs.length > 0) {
+    await parallelMap(
+      dirs,
+      (dir) => scanDirectory(dir, sourceFolder, destinationFolder, ctx),
+      DIR_CONCURRENCY,
+    );
   }
 }
 

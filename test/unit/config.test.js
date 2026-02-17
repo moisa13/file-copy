@@ -60,9 +60,9 @@ describe('config', () => {
     assert.equal(cfg.workers.maxCount, 16);
   });
 
-  it('defaults hashAlgorithm to sha256', () => {
+  it('defaults hashAlgorithm to xxhash64', () => {
     const cfg = reloadConfig();
-    assert.equal(cfg.hashAlgorithm, 'sha256');
+    assert.equal(cfg.hashAlgorithm, 'xxhash64');
   });
 
   it('defaults scanner.recursive to true', () => {

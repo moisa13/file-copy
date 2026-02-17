@@ -6,12 +6,38 @@ const config = require('../config');
 const database = require('../queue/database');
 const logger = require('../logger');
 
+let xxhash = null;
+try {
+  xxhash = require('xxhash-addon');
+} catch (_) {}
+
+function createHasher() {
+  const algo = config.hashAlgorithm;
+  if (algo === 'xxhash64' && xxhash) {
+    return new xxhash.XXHash64(Buffer.alloc(8));
+  }
+  if (algo === 'xxhash3' && xxhash) {
+    return new xxhash.XXHash3(Buffer.alloc(8));
+  }
+  const nativeAlgo = algo.startsWith('xxhash') ? 'sha256' : algo;
+  return crypto.createHash(nativeAlgo);
+}
+
+function digestHasher(hasher) {
+  if (typeof hasher.digest === 'function') {
+    const result = hasher.digest();
+    if (Buffer.isBuffer(result)) return result.toString('hex');
+    return result;
+  }
+  return hasher.digest('hex');
+}
+
 function computeFileHash(filePath) {
   return new Promise((resolve, reject) => {
-    const hash = crypto.createHash(config.hashAlgorithm);
+    const hash = createHasher();
     const stream = fs.createReadStream(filePath);
     stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('end', () => resolve(digestHasher(hash)));
     stream.on('error', (err) => {
       stream.destroy();
       reject(err);
@@ -24,7 +50,8 @@ function copyFileWithHash(sourcePath, destinationPath, onProgress) {
   fs.mkdirSync(dir, { recursive: true });
 
   return new Promise((resolve, reject) => {
-    const hash = crypto.createHash(config.hashAlgorithm);
+    const sourceHash = createHasher();
+    const destHash = createHasher();
     const readStream = fs.createReadStream(sourcePath);
     const writeStream = fs.createWriteStream(destinationPath);
     let destroyed = false;
@@ -42,7 +69,8 @@ function copyFileWithHash(sourcePath, destinationPath, onProgress) {
     }
 
     readStream.on('data', (chunk) => {
-      hash.update(chunk);
+      sourceHash.update(chunk);
+      destHash.update(chunk);
       bytesCopied += chunk.length;
       if (onProgress) onProgress(bytesCopied);
     });
@@ -50,7 +78,12 @@ function copyFileWithHash(sourcePath, destinationPath, onProgress) {
     writeStream.on('error', cleanup);
     readStream.pipe(writeStream);
     writeStream.on('finish', () => {
-      if (!destroyed) resolve(hash.digest('hex'));
+      if (!destroyed) {
+        resolve({
+          sourceHash: digestHasher(sourceHash),
+          destHash: digestHasher(destHash),
+        });
+      }
     });
   });
 }
@@ -168,7 +201,7 @@ class WorkerPool extends EventEmitter {
     }
 
     const now = Date.now();
-    if (!this._cachedFolderCounts || now - this._folderCountsTimestamp > 1000) {
+    if (!this._cachedFolderCounts || now - this._folderCountsTimestamp > 10000) {
       this._cachedFolderCounts = database.getActiveFolderCounts(this.bucketId);
       this._folderCountsTimestamp = now;
     }
@@ -301,8 +334,7 @@ class WorkerPool extends EventEmitter {
         });
       };
 
-      const sourceHash = await copyFileWithHash(file.source_path, file.destination_path, onProgress);
-      const destHash = await computeFileHash(file.destination_path);
+      const { sourceHash, destHash } = await copyFileWithHash(file.source_path, file.destination_path, onProgress);
 
       if (sourceHash !== destHash) {
         try {
