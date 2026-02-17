@@ -3,6 +3,7 @@ const config = require('./config');
 const database = require('./queue/database');
 const logger = require('./logger');
 const bucketManager = require('./buckets/manager');
+const threadPool = require('./workers/thread-pool');
 const { createServer } = require('./api');
 
 async function main() {
@@ -54,7 +55,8 @@ async function main() {
 
     try {
       await bucketManager.stopAll();
-      console.log('Workers encerrados.');
+      threadPool.shutdown();
+      console.log('Workers e threads encerrados.');
     } catch (err) {
       console.error('Erro ao parar workers:', err.message);
     }

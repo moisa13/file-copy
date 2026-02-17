@@ -1,92 +1,9 @@
-const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const config = require('../config');
 const database = require('../queue/database');
 const logger = require('../logger');
-
-let xxhash = null;
-try {
-  xxhash = require('xxhash-addon');
-} catch (_) {}
-
-function createHasher() {
-  const algo = config.hashAlgorithm;
-  if (algo === 'xxhash64' && xxhash) {
-    return new xxhash.XXHash64(Buffer.alloc(8));
-  }
-  if (algo === 'xxhash3' && xxhash) {
-    return new xxhash.XXHash3(Buffer.alloc(8));
-  }
-  const nativeAlgo = algo.startsWith('xxhash') ? 'sha256' : algo;
-  return crypto.createHash(nativeAlgo);
-}
-
-function digestHasher(hasher) {
-  if (typeof hasher.digest === 'function') {
-    const result = hasher.digest();
-    if (Buffer.isBuffer(result)) return result.toString('hex');
-    return result;
-  }
-  return hasher.digest('hex');
-}
-
-function computeFileHash(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = createHasher();
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(digestHasher(hash)));
-    stream.on('error', (err) => {
-      stream.destroy();
-      reject(err);
-    });
-  });
-}
-
-function copyFileWithHash(sourcePath, destinationPath, onProgress) {
-  const dir = path.dirname(destinationPath);
-  fs.mkdirSync(dir, { recursive: true });
-
-  return new Promise((resolve, reject) => {
-    const sourceHash = createHasher();
-    const destHash = createHasher();
-    const readStream = fs.createReadStream(sourcePath);
-    const writeStream = fs.createWriteStream(destinationPath);
-    let destroyed = false;
-    let bytesCopied = 0;
-
-    function cleanup(err) {
-      if (destroyed) return;
-      destroyed = true;
-      readStream.destroy();
-      writeStream.destroy();
-      try {
-        fs.unlinkSync(destinationPath);
-      } catch (_) {}
-      reject(err);
-    }
-
-    readStream.on('data', (chunk) => {
-      sourceHash.update(chunk);
-      destHash.update(chunk);
-      bytesCopied += chunk.length;
-      if (onProgress) onProgress(bytesCopied);
-    });
-    readStream.on('error', cleanup);
-    writeStream.on('error', cleanup);
-    readStream.pipe(writeStream);
-    writeStream.on('finish', () => {
-      if (!destroyed) {
-        resolve({
-          sourceHash: digestHasher(sourceHash),
-          destHash: digestHasher(destHash),
-        });
-      }
-    });
-  });
-}
+const threadPool = require('./thread-pool');
 
 class WorkerPool extends EventEmitter {
   constructor(bucketId, workerCount) {
@@ -252,98 +169,44 @@ class WorkerPool extends EventEmitter {
   async _processFile(file, workerId) {
     const bucketName = this._cachedBucketName || String(this.bucketId);
 
-    try {
-      this.emit('status-change', {
+    this.emit('status-change', {
+      bucketId: this.bucketId,
+      fileId: file.id,
+      status: 'in_progress',
+      sourcePath: file.source_path,
+    });
+    logger.log('in_progress', {
+      bucketName,
+      sourcePath: file.source_path,
+      sourceFolder: file.source_folder,
+      fileSize: file.file_size,
+      workerId,
+      message: 'Inicio da copia',
+    });
+
+    const onProgress = (bytesCopied) => {
+      this.emit('copy-progress', {
         bucketId: this.bucketId,
         fileId: file.id,
-        status: 'in_progress',
-        sourcePath: file.source_path,
-      });
-      logger.log('in_progress', {
-        bucketName,
-        sourcePath: file.source_path,
-        sourceFolder: file.source_folder,
+        bytesCopied,
         fileSize: file.file_size,
-        workerId,
-        message: 'Inicio da copia',
+        percent: file.file_size > 0 ? Math.round((bytesCopied / file.file_size) * 100) : 100,
       });
+    };
 
-      const destExists = fs.existsSync(file.destination_path);
-
-      if (destExists) {
-        const sourceHash = await computeFileHash(file.source_path);
-        const destHash = await computeFileHash(file.destination_path);
-
-        if (sourceHash === destHash) {
-          database.updateStatus(file.id, 'completed', {
-            sourceHash,
-            destinationHash: destHash,
-            completedAt: new Date().toISOString(),
-          });
-          this.emit('status-change', {
-            bucketId: this.bucketId,
-            fileId: file.id,
-            status: 'completed',
-            sourcePath: file.source_path,
-          });
-          logger.log('completed', {
-            bucketName,
-            sourcePath: file.source_path,
-            sourceFolder: file.source_folder,
-            fileSize: file.file_size,
-            sourceHash,
-            workerId,
-            message: 'Arquivo identico ja existe no destino',
-          });
-          return;
-        }
-
-        database.updateStatus(file.id, 'conflict', {
-          sourceHash,
-          destinationHash: destHash,
-        });
-        this.emit('status-change', {
-          bucketId: this.bucketId,
-          fileId: file.id,
-          status: 'conflict',
+    try {
+      const result = await threadPool.processFile(
+        {
           sourcePath: file.source_path,
-        });
-        logger.log('conflict', {
-          bucketName,
-          sourcePath: file.source_path,
-          sourceFolder: file.source_folder,
+          destinationPath: file.destination_path,
           fileSize: file.file_size,
-          sourceHash,
-          workerId,
-          message: `Conflito: hash origem=${sourceHash.slice(0, 12)}... destino=${destHash.slice(0, 12)}...`,
-        });
-        return;
-      }
+        },
+        onProgress,
+      );
 
-      let lastProgressEmit = 0;
-      const onProgress = (bytesCopied) => {
-        const now = Date.now();
-        if (now - lastProgressEmit < 500) return;
-        lastProgressEmit = now;
-        this.emit('copy-progress', {
-          bucketId: this.bucketId,
-          fileId: file.id,
-          bytesCopied,
-          fileSize: file.file_size,
-          percent: file.file_size > 0 ? Math.round((bytesCopied / file.file_size) * 100) : 100,
-        });
-      };
-
-      const { sourceHash, destHash } = await copyFileWithHash(file.source_path, file.destination_path, onProgress);
-
-      if (sourceHash !== destHash) {
-        try {
-          fs.unlinkSync(file.destination_path);
-        } catch (_) {}
+      if (result.result === 'error') {
         database.updateStatus(file.id, 'error', {
-          sourceHash,
-          destinationHash: destHash,
-          errorMessage: 'Falha de integridade: hash pós-cópia não confere',
+          errorMessage: result.message,
         });
         this.emit('status-change', {
           bucketId: this.bucketId,
@@ -356,16 +219,86 @@ class WorkerPool extends EventEmitter {
           sourcePath: file.source_path,
           sourceFolder: file.source_folder,
           fileSize: file.file_size,
-          sourceHash,
           workerId,
-          message: 'Falha de integridade: hash pós-cópia não confere',
+          message: `Erro: ${result.message}`,
+        });
+        return;
+      }
+
+      if (result.result === 'identical') {
+        database.updateStatus(file.id, 'completed', {
+          sourceHash: result.sourceHash,
+          destinationHash: result.destHash,
+          completedAt: new Date().toISOString(),
+        });
+        this.emit('status-change', {
+          bucketId: this.bucketId,
+          fileId: file.id,
+          status: 'completed',
+          sourcePath: file.source_path,
+        });
+        logger.log('completed', {
+          bucketName,
+          sourcePath: file.source_path,
+          sourceFolder: file.source_folder,
+          fileSize: file.file_size,
+          sourceHash: result.sourceHash,
+          workerId,
+          message: 'Arquivo identico ja existe no destino',
+        });
+        return;
+      }
+
+      if (result.result === 'conflict') {
+        database.updateStatus(file.id, 'conflict', {
+          sourceHash: result.sourceHash,
+          destinationHash: result.destHash,
+        });
+        this.emit('status-change', {
+          bucketId: this.bucketId,
+          fileId: file.id,
+          status: 'conflict',
+          sourcePath: file.source_path,
+        });
+        logger.log('conflict', {
+          bucketName,
+          sourcePath: file.source_path,
+          sourceFolder: file.source_folder,
+          fileSize: file.file_size,
+          sourceHash: result.sourceHash,
+          workerId,
+          message: `Conflito: hash origem=${result.sourceHash.slice(0, 12)}... destino=${result.destHash.slice(0, 12)}...`,
+        });
+        return;
+      }
+
+      if (result.result === 'integrity_error') {
+        database.updateStatus(file.id, 'error', {
+          sourceHash: result.sourceHash,
+          destinationHash: result.destHash,
+          errorMessage: 'Falha de integridade: hash pos-copia nao confere',
+        });
+        this.emit('status-change', {
+          bucketId: this.bucketId,
+          fileId: file.id,
+          status: 'error',
+          sourcePath: file.source_path,
+        });
+        logger.log('error', {
+          bucketName,
+          sourcePath: file.source_path,
+          sourceFolder: file.source_folder,
+          fileSize: file.file_size,
+          sourceHash: result.sourceHash,
+          workerId,
+          message: 'Falha de integridade: hash pos-copia nao confere',
         });
         return;
       }
 
       database.updateStatus(file.id, 'completed', {
-        sourceHash,
-        destinationHash: destHash,
+        sourceHash: result.sourceHash,
+        destinationHash: result.destHash,
         completedAt: new Date().toISOString(),
       });
       this.emit('status-change', {
@@ -379,7 +312,7 @@ class WorkerPool extends EventEmitter {
         sourcePath: file.source_path,
         sourceFolder: file.source_folder,
         fileSize: file.file_size,
-        sourceHash,
+        sourceHash: result.sourceHash,
         workerId,
         message: 'Copia finalizada com sucesso',
       });
