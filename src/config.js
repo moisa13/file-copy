@@ -1,3 +1,4 @@
+const os = require('os');
 const path = require('path');
 
 function env(key, fallback) {
@@ -38,12 +39,18 @@ module.exports = {
     host: env('HOST', '0.0.0.0'),
   },
 
+  threads: {
+    count: envInt('THREAD_COUNT', Math.max(1, os.cpus().length - 1)),
+  },
+
   hashAlgorithm: env('HASH_ALGORITHM', 'xxhash64'),
 
   scanner: {
     recursive: envBool('SCANNER_RECURSIVE', true),
     ignorePatterns: ['.DS_Store', 'Thumbs.db', '.gitkeep'],
   },
+
+  copyBufferSize: envInt('COPY_BUFFER_SIZE', 524288),
 
   rateLimit: {
     windowMs: envInt('RATE_LIMIT_WINDOW_MS', 60000),
