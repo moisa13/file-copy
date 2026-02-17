@@ -1,6 +1,6 @@
 {
   "name": "file-copy-manager",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Sistema de copia gerenciada de arquivos com fila de processamento e dashboard web",
   "main": "src/index.js",
   "scripts": {
