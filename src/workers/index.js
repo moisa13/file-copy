@@ -183,7 +183,7 @@ class WorkerPool extends EventEmitter {
 
   _scheduleLoop() {
     if (this._loopTimer) return;
-    const interval = (this._hadWorkLastLoop || this.activeWorkers > 0) ? 200 : 1000;
+    const interval = this._hadWorkLastLoop || this.activeWorkers > 0 ? 200 : 1000;
     this._loopTimer = setTimeout(() => {
       this._loopTimer = null;
       this._processLoop();

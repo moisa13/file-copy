@@ -21,12 +21,15 @@ class ScannerService {
       this.broadcast('stats-update', database.getStatsByBucket(id));
     };
 
-    scanner.scanBucket(bucket, onBatch).then((result) => {
-      this.broadcast('scan-complete', { bucketId: id, found: result.found, added: result.added });
-      this.broadcast('stats-update', database.getStatsByBucket(id));
-    }).catch((err) => {
-      logger.system(`Erro durante varredura do bucket ${id}: ${err.message}`);
-    });
+    scanner
+      .scanBucket(bucket, onBatch)
+      .then((result) => {
+        this.broadcast('scan-complete', { bucketId: id, found: result.found, added: result.added });
+        this.broadcast('stats-update', database.getStatsByBucket(id));
+      })
+      .catch((err) => {
+        logger.system(`Erro durante varredura do bucket ${id}: ${err.message}`);
+      });
 
     return { status: 'scanning' };
   }
@@ -41,12 +44,19 @@ class ScannerService {
       this.broadcast('stats-update-global', database.getStats());
     };
 
-    scanner.scanAll(onBatch).then((result) => {
-      this.broadcast('scan-complete', { bucketId: null, totalFound: result.totalFound, totalAdded: result.totalAdded });
-      this.broadcast('stats-update-global', database.getStats());
-    }).catch((err) => {
-      logger.system(`Erro durante varredura global: ${err.message}`);
-    });
+    scanner
+      .scanAll(onBatch)
+      .then((result) => {
+        this.broadcast('scan-complete', {
+          bucketId: null,
+          totalFound: result.totalFound,
+          totalAdded: result.totalAdded,
+        });
+        this.broadcast('stats-update-global', database.getStats());
+      })
+      .catch((err) => {
+        logger.system(`Erro durante varredura global: ${err.message}`);
+      });
 
     return { status: 'scanning' };
   }
