@@ -688,9 +688,10 @@ class FileQueueDB {
     }
     const totalSize = this._stmts.sumSizeByStatus.get('conflict').totalSize;
     const newStatus = action === 'overwrite' ? 'pending' : 'completed';
-    const result = action === 'overwrite'
-      ? this._stmts.resolveAllConflictsOverwrite.run()
-      : this._stmts.resolveAllConflictsSkip.run();
+    const result =
+      action === 'overwrite'
+        ? this._stmts.resolveAllConflictsOverwrite.run()
+        : this._stmts.resolveAllConflictsSkip.run();
     if (result.changes > 0) {
       this._adjustStats(null, 'conflict', -result.changes, -totalSize);
       this._adjustStats(null, newStatus, result.changes, totalSize);
@@ -715,9 +716,10 @@ class FileQueueDB {
     }
     const totalSize = this._stmts.sumSizeByStatusForBucket.get('conflict', bucketId).totalSize;
     const newStatus = action === 'overwrite' ? 'pending' : 'completed';
-    const result = action === 'overwrite'
-      ? this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId)
-      : this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
+    const result =
+      action === 'overwrite'
+        ? this._stmts.resolveAllConflictsOverwriteForBucket.run(bucketId)
+        : this._stmts.resolveAllConflictsSkipForBucket.run(bucketId);
     if (result.changes > 0) {
       this._adjustStats(bucketId, 'conflict', -result.changes, -totalSize);
       this._adjustStats(bucketId, newStatus, result.changes, totalSize);

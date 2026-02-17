@@ -81,11 +81,7 @@ async function scanDirectory(dirPath, sourceFolder, destinationFolder, ctx) {
   }
 
   if (dirs.length > 0) {
-    await parallelMap(
-      dirs,
-      (dir) => scanDirectory(dir, sourceFolder, destinationFolder, ctx),
-      DIR_CONCURRENCY,
-    );
+    await parallelMap(dirs, (dir) => scanDirectory(dir, sourceFolder, destinationFolder, ctx), DIR_CONCURRENCY);
   }
 }
 
